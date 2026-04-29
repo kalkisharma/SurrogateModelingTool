@@ -1,0 +1,12 @@
+uploads/
+models/
+__pycache__/
+*.pyc
+*.pyo
+*.joblib
+*.egg-info/
+dist/
+build/
+.env
+.venv
+venv/
