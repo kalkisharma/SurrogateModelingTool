@@ -1,0 +1,382 @@
+import io
+import os
+import time
+
+import numpy as np
+import pandas as pd
+from flask import (Blueprint, current_app, jsonify, render_template,
+                   request, send_file)
+from werkzeug.utils import secure_filename
+
+from app import data_utils, ml_engine
+from sklearn.model_selection import train_test_split
+
+main = Blueprint('main', __name__)
+
+
+def _state():
+    return current_app.config['STATE']
+
+
+def _reset_downstream(state, level='upload'):
+    """Clear state from the given level downward."""
+    if level == 'upload':
+        state.update({
+            'df_raw': None, 'df_clean': None, 'upload_filename': '',
+            'summary': None, 'pairplot_b64': None,
+            'feature_cols': [], 'target_cols': [], 'n_dropped': 0,
+        })
+    if level in ('upload', 'columns'):
+        state.update({
+            'trained': False, 'gpr_warning': None,
+            'results': {}, 'last_predictions': None,
+        })
+
+
+# ---------------------------------------------------------------------------
+# Page
+# ---------------------------------------------------------------------------
+
+@main.route('/')
+def index():
+    return render_template('index.html')
+
+
+# ---------------------------------------------------------------------------
+# Upload
+# ---------------------------------------------------------------------------
+
+@main.route('/api/upload', methods=['POST'])
+def upload():
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file provided.'}), 400
+
+    f = request.files['file']
+    if not f.filename.lower().endswith('.csv'):
+        return jsonify({'error': 'Only CSV files are accepted.'}), 400
+
+    filename = f'{int(time.time())}_{secure_filename(f.filename)}'
+    filepath = os.path.join(current_app.config['UPLOAD_FOLDER'], filename)
+    f.save(filepath)
+
+    df, error = data_utils.validate_and_load_csv(filepath)
+    if error:
+        os.remove(filepath)
+        return jsonify({'error': error}), 400
+
+    state = _state()
+    _reset_downstream(state, level='upload')
+    state['df_raw'] = df
+    state['upload_filename'] = f.filename
+    state['summary'] = data_utils.get_summary(df)
+
+    return jsonify({
+        'summary': state['summary'],
+        'filename': f.filename,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Column selection
+# ---------------------------------------------------------------------------
+
+@main.route('/api/set_columns', methods=['POST'])
+def set_columns():
+    body = request.get_json(silent=True) or {}
+    feature_cols = body.get('feature_cols', [])
+    target_cols = body.get('target_cols', [])
+
+    state = _state()
+    if state['df_raw'] is None:
+        return jsonify({'error': 'No dataset uploaded.'}), 400
+
+    df = state['df_raw']
+    all_cols = set(df.columns.tolist())
+
+    missing = [c for c in feature_cols + target_cols if c not in all_cols]
+    if missing:
+        return jsonify({'error': f'Unknown columns: {missing}'}), 400
+
+    if not feature_cols:
+        return jsonify({'error': 'Select at least one feature column.'}), 400
+
+    if not target_cols:
+        return jsonify({'error': 'Select at least one target column.'}), 400
+
+    overlap = set(feature_cols) & set(target_cols)
+    if overlap:
+        return jsonify({'error': f'Columns cannot be both feature and target: {list(overlap)}'}), 400
+
+    non_numeric = [c for c in target_cols
+                   if not pd.api.types.is_numeric_dtype(df[c])]
+    if non_numeric:
+        return jsonify({'error': f'Target columns must be numeric: {non_numeric}'}), 400
+
+    df_clean, n_dropped = data_utils.clean_data(df, feature_cols, target_cols)
+
+    if len(df_clean) < 5:
+        return jsonify({'error': f'Too few rows after removing NaNs ({len(df_clean)}). Need at least 5.'}), 400
+
+    pairplot_b64 = data_utils.get_pairplot_b64(
+        df_clean, feature_cols + target_cols, max_cols=8
+    )
+
+    _reset_downstream(state, level='columns')
+    state['feature_cols'] = feature_cols
+    state['target_cols'] = target_cols
+    state['df_clean'] = df_clean
+    state['n_dropped'] = n_dropped
+    state['pairplot_b64'] = pairplot_b64
+
+    return jsonify({
+        'n_rows': len(df_clean),
+        'n_dropped': n_dropped,
+        'pairplot_b64': pairplot_b64,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Training
+# ---------------------------------------------------------------------------
+
+@main.route('/api/train', methods=['POST'])
+def train():
+    body = request.get_json(silent=True) or {}
+    state = _state()
+
+    if state['df_clean'] is None or not state['feature_cols']:
+        return jsonify({'error': 'No data or column selection found. Complete Step 1 first.'}), 400
+
+    df_clean = state['df_clean']
+    feature_cols = state['feature_cols']
+    target_cols = state['target_cols']
+
+    config = {
+        'model_type': body.get('model_type', 'linear'),
+        'kernel_type': body.get('kernel_type', 'rbf'),
+        'length_scale': float(body.get('length_scale', 1.0)),
+        'alpha': float(body.get('alpha', 1e-6)),
+        'test_size': float(body.get('test_size', 0.2)),
+        'use_cv': bool(body.get('use_cv', False)),
+        'cv_k': int(body.get('cv_k', 5)),
+        'normalize': bool(body.get('normalize', True)),
+        'feature_cols': feature_cols,
+    }
+    state['train_config'] = config
+
+    n_rows = len(df_clean)
+    gpr_warning = None
+    if config['model_type'] == 'gpr' and n_rows > 2000:
+        gpr_warning = (
+            f'Warning: GPR training on {n_rows} rows may be very slow (O(n³) complexity). '
+            f'Consider Linear Regression for datasets larger than 2,000 rows.'
+        )
+    state['gpr_warning'] = gpr_warning
+
+    X = df_clean[feature_cols].values
+    y_dict = {col: df_clean[col].values for col in target_cols}
+
+    test_size = max(0.1, min(0.4, config['test_size']))
+    X_train, X_test, *y_splits = train_test_split(
+        X, *y_dict.values(), test_size=test_size, random_state=42
+    )
+
+    y_dict_train = {col: y_splits[i * 2] for i, col in enumerate(target_cols)}
+    y_dict_test = {col: y_splits[i * 2 + 1] for i, col in enumerate(target_cols)}
+
+    try:
+        results = ml_engine.train_all(
+            X_train, X_test, y_dict_train, y_dict_test,
+            config, current_app.config['MODELS_FOLDER']
+        )
+    except Exception as exc:
+        return jsonify({'error': f'Training failed: {exc}'}), 500
+
+    state['results'] = results
+    state['trained'] = True
+    state['last_predictions'] = None
+
+    # Build JSON-serializable response (exclude the pipeline objects)
+    results_json = {}
+    for target, res in results.items():
+        results_json[target] = {
+            'metrics_train': res['metrics_train'],
+            'metrics_test': res['metrics_test'],
+            'cv_score': res['cv_score'],
+            'parity_b64': res['parity_b64'],
+            'residuals_b64': res['residuals_b64'],
+            'feat_importance_b64': res['feat_importance_b64'],
+            'optimized_kernel_str': res['optimized_kernel_str'],
+            'optimized_length_scales': res['optimized_length_scales'],
+        }
+
+    return jsonify({
+        'trained': True,
+        'gpr_warning': gpr_warning,
+        'model_type': config['model_type'],
+        'feature_cols': feature_cols,
+        'target_cols': target_cols,
+        'results': results_json,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Downloads
+# ---------------------------------------------------------------------------
+
+@main.route('/api/download/model/<target>')
+def download_model(target):
+    state = _state()
+    if not state['trained'] or target not in state['results']:
+        return jsonify({'error': 'Model not found.'}), 404
+
+    filepath = state['results'][target]['model_path']
+    if not os.path.exists(filepath):
+        return jsonify({'error': 'Model file missing on disk.'}), 404
+
+    safe_name = target.replace(' ', '_').replace('/', '-')
+    return send_file(
+        filepath,
+        as_attachment=True,
+        attachment_filename=f'model_{safe_name}.joblib',
+        mimetype='application/octet-stream',
+    )
+
+
+@main.route('/api/download/predictions')
+def download_predictions():
+    state = _state()
+    if state['last_predictions'] is None:
+        return jsonify({'error': 'No predictions available. Run a prediction first.'}), 404
+
+    buf = io.BytesIO()
+    state['last_predictions'].to_csv(buf, index=False)
+    buf.seek(0)
+    return send_file(
+        buf,
+        as_attachment=True,
+        attachment_filename='predictions.csv',
+        mimetype='text/csv',
+    )
+
+
+# ---------------------------------------------------------------------------
+# Prediction
+# ---------------------------------------------------------------------------
+
+@main.route('/api/predict', methods=['POST'])
+def predict():
+    state = _state()
+    if not state['trained']:
+        return jsonify({'error': 'No trained model. Complete Step 3 first.'}), 400
+
+    feature_cols = state['feature_cols']
+    target_cols = state['target_cols']
+    model_type = state['train_config']['model_type']
+
+    # Detect single-point vs batch
+    content_type = request.content_type or ''
+    if content_type.startswith('application/json'):
+        body = request.get_json(silent=True) or {}
+        inputs = body.get('inputs', {})
+        missing = [c for c in feature_cols if c not in inputs]
+        if missing:
+            return jsonify({'error': f'Missing feature values: {missing}'}), 400
+        try:
+            row = {c: float(inputs[c]) for c in feature_cols}
+        except (ValueError, TypeError) as exc:
+            return jsonify({'error': f'Invalid input value: {exc}'}), 400
+        X_input = pd.DataFrame([row])[feature_cols].values
+    else:
+        if 'file' not in request.files:
+            return jsonify({'error': 'Provide a JSON body for single-point or a file for batch prediction.'}), 400
+        f = request.files['file']
+        try:
+            df_new = pd.read_csv(f)
+            df_new.columns = df_new.columns.str.strip()
+        except Exception as exc:
+            return jsonify({'error': f'Could not read CSV: {exc}'}), 400
+
+        missing = [c for c in feature_cols if c not in df_new.columns]
+        if missing:
+            return jsonify({'error': f'Missing columns in uploaded CSV: {missing}'}), 400
+
+        df_new = df_new[feature_cols].dropna().reset_index(drop=True)
+        if len(df_new) == 0:
+            return jsonify({'error': 'No valid rows in uploaded CSV after removing NaNs.'}), 400
+        X_input = df_new.values
+
+    # Run predictions
+    pred_rows = [{} for _ in range(len(X_input))]
+    for col in feature_cols:
+        col_idx = feature_cols.index(col)
+        for i, row in enumerate(pred_rows):
+            row[col] = float(X_input[i, col_idx])
+
+    for target in target_cols:
+        pipeline = state['results'][target]['pipeline']
+        preds = pipeline.predict(X_input)
+
+        if model_type == 'gpr':
+            gpr = pipeline.named_steps['model']
+            if 'scaler' in pipeline.named_steps:
+                X_scaled = pipeline.named_steps['scaler'].transform(X_input)
+            else:
+                X_scaled = X_input
+            _, stds = gpr.predict(X_scaled, return_std=True)
+            for i, row in enumerate(pred_rows):
+                row[target] = round(float(preds[i]), 8)
+                row[f'{target}_std'] = round(float(stds[i]), 8)
+        else:
+            for i, row in enumerate(pred_rows):
+                row[target] = round(float(preds[i]), 8)
+
+    state['last_predictions'] = pd.DataFrame(pred_rows)
+
+    return jsonify({
+        'predictions': pred_rows,
+        'feature_cols': feature_cols,
+        'target_cols': target_cols,
+        'model_type': model_type,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Sensitivity
+# ---------------------------------------------------------------------------
+
+@main.route('/api/sensitivity')
+def sensitivity():
+    state = _state()
+    if not state['trained']:
+        return jsonify({'error': 'No trained model.'}), 400
+
+    feature = request.args.get('feature', '')
+    target = request.args.get('target', '')
+    feature_cols = state['feature_cols']
+    target_cols = state['target_cols']
+
+    if feature not in feature_cols:
+        return jsonify({'error': f'Unknown feature: {feature}'}), 400
+    if target not in target_cols:
+        return jsonify({'error': f'Unknown target: {target}'}), 400
+
+    df_clean = state['df_clean']
+    feature_idx = feature_cols.index(feature)
+
+    X_ref = df_clean[feature_cols].median().values.reshape(1, -1)
+
+    col_vals = df_clean[feature].values
+    lo = col_vals.min()
+    hi = col_vals.max()
+    rng = hi - lo if hi > lo else 1.0
+    x_sweep = np.linspace(lo - 0.1 * rng, hi + 0.1 * rng, 100)
+
+    pipeline = state['results'][target]['pipeline']
+    model_type = state['train_config']['model_type']
+
+    plot_b64 = ml_engine.get_sensitivity_plot_b64(
+        pipeline, X_ref, feature_cols, feature_idx, target, model_type, x_sweep
+    )
+
+    return jsonify({'plot_b64': plot_b64, 'feature': feature, 'target': target})
