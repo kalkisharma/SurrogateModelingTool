@@ -14,8 +14,8 @@ A locally-deployed web application for aerodynamic and CFD engineers to upload t
 
 ## Requirements
 
-- Python 3.8+
-- pip
+- Python 3.8+ (Anaconda/Miniconda recommended)
+- All dependencies listed in `requirements.txt`
 
 ## Installation
 
@@ -23,13 +23,28 @@ A locally-deployed web application for aerodynamic and CFD engineers to upload t
 pip install -r requirements.txt
 ```
 
+Or with conda:
+
+```bash
+conda install --file requirements.txt -c conda-forge
+```
+
 ## Launch
 
+**From Anaconda Prompt (recommended):**
+```bash
+conda activate base
+python run_surrogate_tool.py
+```
+
+**From standard terminal:**
 ```bash
 python run_surrogate_tool.py
 ```
 
 The browser opens automatically at `http://localhost:5000`.
+
+> **Note for Anaconda users:** Run from the Anaconda Prompt or after running `conda activate base` to ensure MKL/numpy DLLs are loaded correctly.
 
 ## Usage
 
