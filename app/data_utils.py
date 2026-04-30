@@ -82,6 +82,36 @@ def check_extrapolation(X_input, df_clean, feature_cols):
     return list(out_of_range.values())
 
 
+def get_outlier_flags(df, cols):
+    """IQR-based outlier detection per column.
+
+    Returns dict keyed by column name with row_indices, lo/hi bounds, and values.
+    Only columns that have at least one outlier are included. Skips non-numeric and
+    zero-IQR (constant) columns.
+    """
+    flags = {}
+    for col in cols:
+        if col not in df.columns or not pd.api.types.is_numeric_dtype(df[col]):
+            continue
+        Q1 = float(df[col].quantile(0.25))
+        Q3 = float(df[col].quantile(0.75))
+        IQR = Q3 - Q1
+        if IQR == 0:
+            continue
+        lo = Q1 - 1.5 * IQR
+        hi = Q3 + 1.5 * IQR
+        mask = (df[col] < lo) | (df[col] > hi)
+        rows = df.index[mask].tolist()
+        if rows:
+            flags[col] = {
+                'row_indices': rows,
+                'lo': round(lo, 6),
+                'hi': round(hi, 6),
+                'values': [round(float(df.loc[i, col]), 6) for i in rows],
+            }
+    return flags
+
+
 def get_pairplot_b64(df, columns, max_cols=8):
     """Render a scatter matrix for up to max_cols numeric columns.
 

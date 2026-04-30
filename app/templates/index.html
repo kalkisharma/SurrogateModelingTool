@@ -521,6 +521,22 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
         <img id="pairplot-img" src="" alt="Scatter matrix">
       </div>
       <div id="drop-info" class="alert alert-warning" style="display:none;margin-top:12px;"></div>
+
+      <div id="outlier-panel" style="display:none;margin-top:12px;border:1px solid var(--warning-border);border-radius:8px;padding:12px 16px;background:var(--warning-bg);">
+        <details id="outlier-details-toggle">
+          <summary style="font-size:13px;font-weight:600;cursor:pointer;color:#92400e;">
+            ⚠ IQR Outlier Detection — <span id="outlier-summary-text"></span>
+          </summary>
+          <div id="outlier-details" style="margin-top:10px;font-size:12px;color:var(--text);"></div>
+        </details>
+        <div style="margin-top:10px;">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#92400e;">
+            <input type="checkbox" id="exclude-outliers-cb" onchange="toggleOutlierExclusion()" style="accent-color:var(--accent);width:14px;height:14px;">
+            Exclude flagged rows from training data
+          </label>
+          <div id="outlier-excluded-info" class="alert alert-success" style="display:none;margin-top:8px;font-size:12px;"></div>
+        </div>
+      </div>
     </div>
 
     <div class="nav-row">
@@ -717,6 +733,7 @@ const appState = {
   modelType: 'linear',
   trained: false,
   currentStep: 1,
+  featureMedians: {},
 };
 
 // ---------------------------------------------------------------------------
@@ -934,6 +951,12 @@ async function confirmColumns() {
   }
 
   document.getElementById('step1-next-btn').disabled = false;
+
+  // Reset outlier exclusion on new column selection, then show outlier info
+  const excCb = document.getElementById('exclude-outliers-cb');
+  if (excCb) excCb.checked = false;
+  document.getElementById('outlier-excluded-info').style.display = 'none';
+  renderOutlierPanel(data.outlier_info);
 }
 
 // ---------------------------------------------------------------------------
@@ -1001,6 +1024,7 @@ async function runTraining() {
 
   appState.modelType = data.model_type;
   appState.trained = true;
+  appState.featureMedians = data.feature_medians || {};
 
   renderHistory(data.train_history, data.target_cols);
   renderResults(data);
@@ -1071,6 +1095,13 @@ function renderResults(data) {
       `<option value="${escHtml(f)}">${escHtml(f)}</option>`
     ).join('');
 
+    // Reference point inputs pre-filled with training data medians
+    const refInputsHtml = data.feature_cols.map(f => {
+      const median = appState.featureMedians && appState.featureMedians[f] !== undefined
+        ? Number(appState.featureMedians[f]).toPrecision(4) : '';
+      return `<span style="white-space:nowrap;margin-right:4px;">${escHtml(f)}: <input type="number" step="any" id="sens-ref-${escHtml(target)}-${escHtml(f)}" value="${escHtml(median)}" style="width:65px;font-size:11px;padding:2px 4px;border:1px solid var(--border);border-radius:4px;background:white;" onchange="loadSensIfActive('${escHtml(target)}')"></span>`;
+    }).join('');
+
     html += `
     <div class="target-section">
       <h3>Target: ${escHtml(target)}</h3>
@@ -1121,6 +1152,10 @@ function renderResults(data) {
               ${sensitivityOptions}
             </select>
           </div>
+          <details style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">
+            <summary style="cursor:pointer;padding:3px 0;">Reference point (other features held here)</summary>
+            <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;">${refInputsHtml}</div>
+          </details>
           <div class="plot-box" id="sens-box-${escHtml(target)}" style="display:none">
             <img id="sensitivity-plot-${escHtml(target)}" src="" alt="Sensitivity plot" style="width:100%">
           </div>
@@ -1146,6 +1181,17 @@ function renderResults(data) {
             <img id="surface-plot-${escHtml(target)}" src="" alt="Response surface" style="width:100%">
           </div>
         </div>` : ''}
+      </div>
+
+      <div style="margin-top:14px;">
+        <button class="btn btn-secondary" onclick="loadLearningCurve('${escHtml(target)}')" style="font-size:12px;padding:6px 14px;">
+          📈 Show Learning Curve
+        </button>
+        <span id="lc-loading-${escHtml(target)}" style="display:none;font-size:12px;color:var(--text-muted);margin-left:8px;">Computing…</span>
+        <div class="plot-box" id="lc-box-${escHtml(target)}" style="display:none;margin-top:10px;">
+          <div class="plot-label">Learning Curve — training set size vs R²</div>
+          <img id="lc-plot-${escHtml(target)}" src="" alt="Learning curve" style="width:100%">
+        </div>
       </div>
     </div>`;
   }
@@ -1180,8 +1226,8 @@ async function loadSensitivity(selectEl) {
   const imgEl = document.getElementById(`sensitivity-plot-${target}`);
   sensBox.style.display = 'none';
 
-  // Build reference point from Step 4 form if available
-  const refParams = buildRefParams();
+  // Build reference point from Step 3 per-target inputs (or Step 4 form fallback)
+  const refParams = buildRefParams(target);
 
   try {
     const url = `/api/sensitivity?feature=${encodeURIComponent(feature)}&target=${encodeURIComponent(target)}${refParams}`;
@@ -1222,10 +1268,12 @@ async function loadSurface(target) {
   }
 }
 
-function buildRefParams() {
+function buildRefParams(target) {
   let params = '';
   for (const col of appState.featureCols) {
-    const el = document.getElementById(`inp-${col}`);
+    // Prefer per-target Step 3 reference inputs; fall back to Step 4 prediction form
+    const sensEl = target ? document.getElementById(`sens-ref-${target}-${col}`) : null;
+    const el = (sensEl && sensEl.value !== '') ? sensEl : document.getElementById(`inp-${col}`);
     if (el && el.value !== '' && !isNaN(parseFloat(el.value))) {
       params += `&ref_${encodeURIComponent(col)}=${encodeURIComponent(el.value)}`;
     }
@@ -1371,6 +1419,122 @@ async function predictBatch() {
   summaryEl.textContent = `✓ ${data.predictions.length} predictions generated.`;
   summaryEl.style.display = 'block';
   document.getElementById('download-preds-link').style.display = 'inline-flex';
+}
+
+// ---------------------------------------------------------------------------
+// Learning curve
+// ---------------------------------------------------------------------------
+async function loadLearningCurve(target) {
+  const loadingEl = document.getElementById(`lc-loading-${target}`);
+  const boxEl = document.getElementById(`lc-box-${target}`);
+  const imgEl = document.getElementById(`lc-plot-${target}`);
+  if (loadingEl) loadingEl.style.display = 'inline';
+  boxEl.style.display = 'none';
+
+  try {
+    const res = await fetch(`/api/learning_curve?target=${encodeURIComponent(target)}`);
+    const data = await res.json();
+    if (loadingEl) loadingEl.style.display = 'none';
+    if (!res.ok) { alert(data.error || 'Failed to generate learning curve.'); return; }
+    imgEl.src = 'data:image/png;base64,' + data.plot_b64;
+    boxEl.style.display = 'block';
+  } catch (e) {
+    if (loadingEl) loadingEl.style.display = 'none';
+    alert('Failed to load learning curve: ' + e.message);
+  }
+}
+
+// Reload sensitivity plot for a target if a plot is already visible
+function loadSensIfActive(target) {
+  const box = document.getElementById(`sens-box-${target}`);
+  if (box && box.style.display !== 'none') {
+    const sel = document.querySelector(`.sensitivity-feature-select[data-target="${CSS.escape(target)}"]`);
+    if (sel && sel.value) loadSensitivity(sel);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Outlier panel
+// ---------------------------------------------------------------------------
+function renderOutlierPanel(outlierInfo) {
+  const panel = document.getElementById('outlier-panel');
+  const summaryText = document.getElementById('outlier-summary-text');
+  const detailsDiv = document.getElementById('outlier-details');
+
+  if (!outlierInfo || Object.keys(outlierInfo).length === 0) {
+    panel.style.display = 'none';
+    return;
+  }
+
+  const flaggedRows = new Set(Object.values(outlierInfo).flatMap(v => v.row_indices));
+  const nCols = Object.keys(outlierInfo).length;
+  summaryText.textContent = `${flaggedRows.size} flagged row(s) across ${nCols} column(s)`;
+
+  let html = '';
+  for (const [col, info] of Object.entries(outlierInfo)) {
+    const vals = info.values.map(v => v.toPrecision ? v.toPrecision(4) : v).join(', ');
+    html += `<div style="margin-bottom:5px;font-size:12px;">
+      <strong>${escHtml(col)}</strong>: ${info.row_indices.length} outlier(s)
+      — IQR bounds [${info.lo}, ${info.hi}]
+      — values: ${escHtml(vals)}
+      — rows: ${info.row_indices.map(r => `#${r}`).join(', ')}
+    </div>`;
+  }
+  detailsDiv.innerHTML = html;
+  panel.style.display = 'block';
+}
+
+async function toggleOutlierExclusion() {
+  const exclude = document.getElementById('exclude-outliers-cb').checked;
+  if (!appState.featureCols.length || !appState.targetCols.length) return;
+
+  const btn = document.getElementById('confirm-columns-btn');
+  btn.disabled = true;
+
+  let data;
+  try {
+    const res = await fetch('/api/set_columns', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        feature_cols: appState.featureCols,
+        target_cols: appState.targetCols,
+        exclude_outliers: exclude,
+      }),
+    });
+    data = await res.json();
+    if (!res.ok) {
+      showError('column-error', data.error);
+      document.getElementById('exclude-outliers-cb').checked = !exclude;
+      btn.disabled = false;
+      return;
+    }
+  } catch (e) {
+    showError('column-error', 'Network error: ' + e.message);
+    document.getElementById('exclude-outliers-cb').checked = !exclude;
+    btn.disabled = false;
+    return;
+  }
+
+  btn.disabled = false;
+
+  if (data.pairplot_b64) {
+    document.getElementById('pairplot-img').src = 'data:image/png;base64,' + data.pairplot_b64;
+  }
+
+  const excludedInfoEl = document.getElementById('outlier-excluded-info');
+  if (exclude && data.n_outliers_excluded > 0) {
+    excludedInfoEl.textContent = `✓ ${data.n_outliers_excluded} outlier row(s) excluded. Training data: ${data.n_rows} rows.`;
+    excludedInfoEl.style.display = 'block';
+  } else {
+    excludedInfoEl.style.display = 'none';
+  }
+
+  if (data.n_dropped > 0) {
+    const el = document.getElementById('drop-info');
+    el.textContent = `${data.n_dropped} row(s) removed (NaN + outliers). ${data.n_rows} rows remain for training.`;
+    el.style.display = 'block';
+  }
 }
 
 // ---------------------------------------------------------------------------

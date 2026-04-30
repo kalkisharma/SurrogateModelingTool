@@ -10,7 +10,7 @@ from flask import (Blueprint, current_app, jsonify, render_template,
 from werkzeug.utils import secure_filename
 
 from app import data_utils, ml_engine
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import learning_curve as sklearn_learning_curve, train_test_split
 
 main = Blueprint('main', __name__)
 
@@ -119,6 +119,20 @@ def set_columns():
     if len(df_clean) < 5:
         return jsonify({'error': f'Too few rows after removing NaNs ({len(df_clean)}). Need at least 5.'}), 400
 
+    # Detect IQR outliers before optional exclusion
+    outlier_info = data_utils.get_outlier_flags(df_clean, feature_cols + target_cols)
+
+    # Optionally exclude detected outlier rows
+    n_outliers_excluded = 0
+    if body.get('exclude_outliers', False) and outlier_info:
+        rows_to_drop = set()
+        for col_flags in outlier_info.values():
+            rows_to_drop.update(col_flags['row_indices'])
+        if rows_to_drop:
+            df_clean = df_clean.drop(index=sorted(rows_to_drop)).reset_index(drop=True)
+            n_outliers_excluded = len(rows_to_drop)
+            n_dropped += n_outliers_excluded
+
     pairplot_b64 = data_utils.get_pairplot_b64(
         df_clean, feature_cols + target_cols, max_cols=8
     )
@@ -134,6 +148,8 @@ def set_columns():
         'n_rows': len(df_clean),
         'n_dropped': n_dropped,
         'pairplot_b64': pairplot_b64,
+        'outlier_info': outlier_info,
+        'n_outliers_excluded': n_outliers_excluded,
     })
 
 
@@ -209,6 +225,8 @@ def train():
     state['trained'] = True
     state['last_predictions'] = None
 
+    feature_medians = {col: float(df_clean[col].median()) for col in feature_cols}
+
     # Update lightweight training history (keep last 3)
     history_entry = {
         'model_type': config['model_type'],
@@ -243,6 +261,7 @@ def train():
         'target_cols': target_cols,
         'results': results_json,
         'train_history': state['train_history'],
+        'feature_medians': feature_medians,
     })
 
 
@@ -376,9 +395,18 @@ def predict():
             for i, row in enumerate(pred_rows):
                 row[target] = round(float(preds[i]), 8)
                 row[f'{target}_std'] = round(float(stds[i]), 8)
-        else:
+        elif model_type == 'rf':
+            stds = ml_engine._rf_std(pipeline, X_input)
             for i, row in enumerate(pred_rows):
                 row[target] = round(float(preds[i]), 8)
+                row[f'{target}_std'] = round(float(stds[i]), 8)
+        else:  # linear
+            bootstrap_models = state['results'][target].get('bootstrap_models', [])
+            stds = ml_engine._bootstrap_std(bootstrap_models, X_input)
+            for i, row in enumerate(pred_rows):
+                row[target] = round(float(preds[i]), 8)
+                if stds is not None:
+                    row[f'{target}_std'] = round(float(stds[i]), 8)
 
     state['last_predictions'] = pd.DataFrame(pred_rows)
 
@@ -433,8 +461,10 @@ def sensitivity():
     pipeline = state['results'][target]['pipeline']
     model_type = state['train_config']['model_type']
 
+    bootstrap_models = state['results'][target].get('bootstrap_models', [])
     plot_b64 = ml_engine.get_sensitivity_plot_b64(
-        pipeline, X_ref, feature_cols, feature_idx, target, model_type, x_sweep
+        pipeline, X_ref, feature_cols, feature_idx, target, model_type, x_sweep,
+        bootstrap_models=bootstrap_models
     )
 
     return jsonify({'plot_b64': plot_b64, 'feature': feature, 'target': target})
@@ -494,3 +524,51 @@ def surface():
         'feature_y': feature_y,
         'target': target,
     })
+
+
+# ---------------------------------------------------------------------------
+# Learning Curve (on-demand)
+# ---------------------------------------------------------------------------
+
+@main.route('/api/learning_curve')
+def learning_curve_route():
+    state = _state()
+    if not state['trained']:
+        return jsonify({'error': 'No trained model.'}), 400
+
+    target = request.args.get('target', '')
+    if target not in state['target_cols']:
+        return jsonify({'error': f'Unknown target: {target}'}), 400
+
+    df_clean = state['df_clean']
+    feature_cols = state['feature_cols']
+    config = state['train_config']
+    model_type = config['model_type']
+    n_features = len(feature_cols)
+
+    X = df_clean[feature_cols].values
+    y = df_clean[target].values
+    n = len(X)
+
+    kernel = (
+        ml_engine.build_kernel(config['kernel_type'], n_features, config['length_scale'])
+        if model_type == 'gpr' else None
+    )
+    fresh_pipeline = ml_engine.build_pipeline(
+        model_type, kernel, config['alpha'], config['normalize'], config
+    )
+
+    cv = min(5, max(2, n // 5))
+    try:
+        train_sizes, train_scores, val_scores = sklearn_learning_curve(
+            fresh_pipeline, X, y,
+            train_sizes=np.linspace(0.1, 1.0, 10),
+            cv=cv,
+            scoring='r2',
+            n_jobs=1,
+        )
+    except Exception as exc:
+        return jsonify({'error': f'Learning curve failed: {exc}'}), 500
+
+    plot_b64 = ml_engine.get_learning_curve_plot_b64(train_sizes, train_scores, val_scores, target)
+    return jsonify({'plot_b64': plot_b64, 'target': target})

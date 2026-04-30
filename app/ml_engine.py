@@ -1,6 +1,7 @@
 import base64
 import io
 import os
+import warnings
 
 import joblib
 import matplotlib.pyplot as plt
@@ -10,11 +11,12 @@ from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel, Matern
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import cross_val_score, learning_curve
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 ACCENT = '#2563EB'
+N_BOOTSTRAP = 100
 
 
 # ---------------------------------------------------------------------------
@@ -76,6 +78,34 @@ def compute_metrics(y_true, y_pred):
         'r2': round(float(r2_score(y_true, y_pred)), 6),
         'mae': round(float(mean_absolute_error(y_true, y_pred)), 6),
     }
+
+
+# ---------------------------------------------------------------------------
+# Uncertainty helpers
+# ---------------------------------------------------------------------------
+
+def _gpr_std(pipeline, X):
+    """Return GPR predictive std, bypassing Pipeline (which doesn't forward return_std)."""
+    gpr = pipeline.named_steps['model']
+    X_s = pipeline.named_steps['scaler'].transform(X) if 'scaler' in pipeline.named_steps else X
+    _, std = gpr.predict(X_s, return_std=True)
+    return std
+
+
+def _rf_std(pipeline, X):
+    """Return std of individual tree predictions for RF."""
+    rf = pipeline.named_steps['model']
+    X_s = pipeline.named_steps['scaler'].transform(X) if 'scaler' in pipeline.named_steps else X
+    tree_preds = np.array([t.predict(X_s) for t in rf.estimators_])
+    return tree_preds.std(axis=0)
+
+
+def _bootstrap_std(bootstrap_models, X):
+    """Return std of bootstrap model predictions for linear regression."""
+    if not bootstrap_models:
+        return None
+    boot_preds = np.array([m.predict(X) for m in bootstrap_models])
+    return boot_preds.std(axis=0)
 
 
 # ---------------------------------------------------------------------------
@@ -175,31 +205,35 @@ def get_feature_importance_plot_b64(pipeline, feature_names, model_type, target_
 
 
 def get_sensitivity_plot_b64(pipeline, X_ref, feature_names, feature_idx,
-                              target_name, model_type, x_sweep):
+                              target_name, model_type, x_sweep,
+                              bootstrap_models=None):
+    """1D sensitivity plot with ±1σ uncertainty band for all model types."""
     X_sweep = np.tile(X_ref, (len(x_sweep), 1))
     X_sweep[:, feature_idx] = x_sweep
 
     fig, ax = plt.subplots(figsize=(7, 4))
     fig.patch.set_facecolor('white')
 
+    y_pred = pipeline.predict(X_sweep)
+
     if model_type == 'gpr':
-        gpr = pipeline.named_steps['model']
-        if 'scaler' in pipeline.named_steps:
-            X_scaled = pipeline.named_steps['scaler'].transform(X_sweep)
-        else:
-            X_scaled = X_sweep
-        y_pred, y_std = gpr.predict(X_scaled, return_std=True)
-        ax.plot(x_sweep, y_pred, color=ACCENT, lw=2, label='Mean')
+        y_std = _gpr_std(pipeline, X_sweep)
+        label_std = '±1σ (GPR)'
+    elif model_type == 'rf':
+        y_std = _rf_std(pipeline, X_sweep)
+        label_std = '±1σ (tree variance)'
+    else:  # linear
+        y_std = _bootstrap_std(bootstrap_models, X_sweep)
+        label_std = '±1σ (bootstrap)'
+
+    ax.plot(x_sweep, y_pred, color=ACCENT, lw=2, label='Mean')
+    if y_std is not None:
         ax.fill_between(x_sweep, y_pred - y_std, y_pred + y_std,
-                        alpha=0.25, color=ACCENT, label='±1σ')
+                        alpha=0.25, color=ACCENT, label=label_std)
         ax.legend(fontsize=9)
-    else:
-        y_pred = pipeline.predict(X_sweep)
-        ax.plot(x_sweep, y_pred, color=ACCENT, lw=2)
 
     ref_val = float(X_ref[0, feature_idx])
-    ax.axvline(ref_val, color='grey', linestyle='--', lw=1, alpha=0.7,
-               label='reference')
+    ax.axvline(ref_val, color='grey', linestyle='--', lw=1, alpha=0.7, label='reference')
 
     ax.set_xlabel(feature_names[feature_idx])
     ax.set_ylabel(target_name)
@@ -262,6 +296,35 @@ def get_surface_plot_b64(pipeline, X_ref, feature_names, idx_x, idx_y,
     return _fig_to_b64(fig)
 
 
+def get_learning_curve_plot_b64(train_sizes, train_scores, val_scores, target_name):
+    """Plot train vs validation R² across training set sizes."""
+    train_mean = train_scores.mean(axis=1)
+    train_std = train_scores.std(axis=1)
+    val_mean = val_scores.mean(axis=1)
+    val_std = val_scores.std(axis=1)
+
+    fig, ax = plt.subplots(figsize=(7, 4))
+    fig.patch.set_facecolor('white')
+
+    ax.plot(train_sizes, train_mean, 'o-', color=ACCENT, lw=2, label='Train R²')
+    ax.fill_between(train_sizes, train_mean - train_std, train_mean + train_std,
+                    alpha=0.15, color=ACCENT)
+
+    ax.plot(train_sizes, val_mean, 'o-', color='#dc2626', lw=2, label='Validation R²')
+    ax.fill_between(train_sizes, val_mean - val_std, val_mean + val_std,
+                    alpha=0.15, color='#dc2626')
+
+    ax.axhline(1.0, color='grey', lw=0.8, linestyle=':', alpha=0.5)
+    ax.set_xlabel('Training set size')
+    ax.set_ylabel('R²')
+    ax.set_title(f'Learning Curve — {target_name}')
+    ax.legend(fontsize=10)
+    ax.set_ylim(bottom=min(0, val_mean.min() - 0.05))
+    ax.set_facecolor('white')
+    plt.tight_layout()
+    return _fig_to_b64(fig)
+
+
 # ---------------------------------------------------------------------------
 # Model persistence
 # ---------------------------------------------------------------------------
@@ -280,7 +343,8 @@ def save_model(pipeline, target_name, models_dir):
 def train_all(X_train, X_test, y_dict_train, y_dict_test, config, models_dir):
     """Train one pipeline per target column.
 
-    Returns a dict keyed by target name with metrics, plots, and model path.
+    Returns a dict keyed by target name with metrics, plots, model path,
+    and (for linear) bootstrap models for uncertainty estimation.
     """
     results = {}
     model_type = config['model_type']
@@ -316,6 +380,16 @@ def train_all(X_train, X_test, y_dict_train, y_dict_test, config, models_dir):
                                      cv=int(config['cv_k']), scoring='r2')
             cv_score = round(float(scores.mean()), 6)
 
+        # Bootstrap models for linear regression uncertainty
+        bootstrap_models = []
+        if model_type == 'linear':
+            rng = np.random.default_rng(42)
+            for _ in range(N_BOOTSTRAP):
+                idx = rng.integers(0, len(X_train), size=len(X_train))
+                bp = build_pipeline('linear', None, config['alpha'], config['normalize'])
+                bp.fit(X_train[idx], y_train[idx])
+                bootstrap_models.append(bp)
+
         feature_names = config.get('feature_cols', [])
 
         parity_b64 = get_parity_plot_b64(y_test, y_pred_test, target_name)
@@ -346,6 +420,7 @@ def train_all(X_train, X_test, y_dict_train, y_dict_test, config, models_dir):
 
         results[target_name] = {
             'pipeline': pipeline,
+            'bootstrap_models': bootstrap_models,
             'model_path': model_path,
             'metrics_train': metrics_train,
             'metrics_test': metrics_test,
