@@ -617,7 +617,53 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
       <div class="panel-title">Model Configuration</div>
 
       <div class="form-group">
-        <label for="model-type">Model Type</label>
+        <label for="model-type">Model Type <button class="btn-help" onclick="toggleHelp('help-model-type')">?</button></label>
+        <div id="help-model-type" class="help-card" style="display:none;margin-bottom:10px;">
+          <div style="overflow-x:auto;">
+            <table style="width:100%;border-collapse:collapse;font-size:11px;">
+              <thead>
+                <tr style="background:#dbeafe;">
+                  <th style="padding:4px 8px;text-align:left;border:1px solid #bfdbfe;">—</th>
+                  <th style="padding:4px 8px;border:1px solid #bfdbfe;">Linear</th>
+                  <th style="padding:4px 8px;border:1px solid #bfdbfe;">GPR</th>
+                  <th style="padding:4px 8px;border:1px solid #bfdbfe;">Random Forest</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td style="padding:4px 8px;font-weight:600;border:1px solid #bfdbfe;">Best for</td>
+                  <td style="padding:4px 8px;border:1px solid #bfdbfe;">Quick baseline, any size</td>
+                  <td style="padding:4px 8px;border:1px solid #bfdbfe;">Small, clean datasets (30–500 runs)</td>
+                  <td style="padding:4px 8px;border:1px solid #bfdbfe;">Medium–large datasets (100–2000 runs)</td>
+                </tr>
+                <tr style="background:#f8fafc;">
+                  <td style="padding:4px 8px;font-weight:600;border:1px solid #bfdbfe;">Accuracy</td>
+                  <td style="padding:4px 8px;border:1px solid #bfdbfe;">Low–moderate</td>
+                  <td style="padding:4px 8px;border:1px solid #bfdbfe;">High on small data</td>
+                  <td style="padding:4px 8px;border:1px solid #bfdbfe;">Good on medium–large</td>
+                </tr>
+                <tr>
+                  <td style="padding:4px 8px;font-weight:600;border:1px solid #bfdbfe;">Training speed</td>
+                  <td style="padding:4px 8px;border:1px solid #bfdbfe;">Instant</td>
+                  <td style="padding:4px 8px;border:1px solid #bfdbfe;">Slow above 500 rows</td>
+                  <td style="padding:4px 8px;border:1px solid #bfdbfe;">Fast</td>
+                </tr>
+                <tr style="background:#f8fafc;">
+                  <td style="padding:4px 8px;font-weight:600;border:1px solid #bfdbfe;">Uncertainty (±σ)</td>
+                  <td style="padding:4px 8px;border:1px solid #bfdbfe;">✓ bootstrap</td>
+                  <td style="padding:4px 8px;border:1px solid #bfdbfe;">✓ analytical</td>
+                  <td style="padding:4px 8px;border:1px solid #bfdbfe;">✓ tree variance</td>
+                </tr>
+                <tr>
+                  <td style="padding:4px 8px;font-weight:600;border:1px solid #bfdbfe;">Handles non-linear</td>
+                  <td style="padding:4px 8px;border:1px solid #bfdbfe;">✗</td>
+                  <td style="padding:4px 8px;border:1px solid #bfdbfe;">✓</td>
+                  <td style="padding:4px 8px;border:1px solid #bfdbfe;">✓</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
         <select id="model-type" onchange="onModelTypeChange()">
           <option value="linear">Linear Regression — fast baseline, works on any dataset size</option>
           <option value="gpr">Gaussian Process Regression (GPR) — most accurate on small datasets, gives uncertainty estimates</option>
@@ -627,21 +673,25 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
 
       <div id="gpr-panel" style="display:none">
         <div class="form-group">
-          <label for="kernel-type">Kernel</label>
+          <label for="kernel-type">Kernel <button class="btn-help" onclick="toggleHelp('help-kernel-type')">?</button></label>
+          <div id="help-kernel-type" class="help-card" style="display:none;margin-bottom:8px;">
+            <p><strong>RBF (Squared Exponential):</strong> Assumes your output changes smoothly everywhere — ideal for aerodynamic coefficients like C<sub>L</sub> and C<sub>D</sub> that vary continuously with angle-of-attack and Mach number. Start here.</p>
+            <p><strong>Matérn ν=1.5:</strong> Allows slightly rougher transitions. Better when your response surface has localised non-linearities (e.g. near stall) or when measurements include noise.</p>
+          </div>
           <select id="kernel-type">
-            <option value="rbf">RBF (Squared Exponential) — smooth, infinitely differentiable</option>
-            <option value="matern">Matérn ν=1.5 — once-differentiable, more robust to noise</option>
+            <option value="rbf">RBF (Squared Exponential) — smooth, ideal for most aerodynamic data</option>
+            <option value="matern">Matérn ν=1.5 — slightly rougher, better near stall or with noisy data</option>
           </select>
         </div>
         <div class="form-group">
           <label for="length-scale">Initial Length Scale</label>
           <input type="number" id="length-scale" value="1.0" min="0.001" step="0.1" style="width:120px">
-          <p class="hint">Starting value for optimizer. Each feature gets its own length scale (ARD). Optimizer runs automatically with n_restarts=5.</p>
+          <p class="hint">Starting guess for how quickly the output changes with each input. The optimizer finds the best values automatically — leave at 1.0 unless results look poor.</p>
         </div>
         <div class="form-group">
           <label for="alpha">Alpha (noise level)</label>
           <input type="number" id="alpha" value="0.000001" min="1e-10" step="0.000001" style="width:160px">
-          <p class="hint">Regularization added to kernel diagonal. Use 1e-6 for clean CFD data; higher (0.01–0.1) for noisy measurements.</p>
+          <p class="hint">Assumed noise level in your CFD data. Use 1e-6 for clean solver output. Increase to 0.01–0.1 if measurements include physical noise or numerical scatter.</p>
         </div>
         <div class="alert alert-info">Hyperparameters are auto-optimized via L-BFGS-B (5 random restarts). Optimized values are shown after training.</div>
       </div>
@@ -670,7 +720,11 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
       </div>
 
       <div class="form-group">
-        <label>Train / Test Split</label>
+        <label>Train / Test Split <button class="btn-help" onclick="toggleHelp('help-train-test')">?</button></label>
+        <div id="help-train-test" class="help-card" style="display:none;margin-bottom:8px;">
+          <p>Holds back a random subset of your CFD runs as a proof test. The model never sees these runs during training — fit quality (R²) in Step 3 is measured on this held-back set. A reliable surrogate performs well on both.</p>
+          <p>20% is a good default (e.g. 77 training / 19 test from 96 runs). Use 10–15% if you have fewer than 40 runs — you need enough training data for the model to learn the response surface.</p>
+        </div>
         <div style="display:flex;align-items:center;gap:12px;">
           <input type="range" id="test-size" min="10" max="40" value="20" step="5" oninput="document.getElementById('test-size-display').textContent=this.value+'%'">
           <span>Test: <strong id="test-size-display">20%</strong></span>
@@ -680,7 +734,11 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
       <div class="form-group">
         <div class="toggle-row">
           <input type="checkbox" id="use-cv" onchange="document.getElementById('cv-k-panel').style.display=this.checked?'block':'none'">
-          <label for="use-cv" style="margin-bottom:0;">Enable k-fold Cross-Validation</label>
+          <label for="use-cv" style="margin-bottom:0;">Enable k-fold Cross-Validation <button class="btn-help" onclick="toggleHelp('help-cv')">?</button></label>
+        </div>
+        <div id="help-cv" class="help-card" style="display:none;margin-top:8px;">
+          <p>Divides your data into k groups. The model is trained and tested k times, each time using a different group as the test set. The CV score is the average across all k tests — a more reliable accuracy estimate than a single split, at the cost of k× longer training time.</p>
+          <p>Recommended when you have fewer than 50 simulation runs. For 96+ runs a single 80/20 split is usually sufficient.</p>
         </div>
         <div id="cv-k-panel" style="display:none;margin-top:10px;">
           <label for="cv-k" style="font-size:13px;">Number of folds (k)</label>
@@ -691,7 +749,11 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
       <div class="form-group">
         <div class="toggle-row">
           <input type="checkbox" id="normalize" checked>
-          <label for="normalize" style="margin-bottom:0;">Normalize inputs (StandardScaler)</label>
+          <label for="normalize" style="margin-bottom:0;">Normalize inputs (StandardScaler) <button class="btn-help" onclick="toggleHelp('help-normalize')">?</button></label>
+        </div>
+        <div id="help-normalize" class="help-card" style="display:none;margin-top:8px;">
+          <p>Rescales all input features to the same numerical range (mean=0, std=1) before training. Essential for GPR and Linear Regression — without it, an angle-of-attack in degrees (0–20) would dominate a Mach number (0.2–0.8) just because its numbers are larger.</p>
+          <p>Not required for Random Forest (tree splits are scale-invariant) but kept on for consistency. Safe to leave checked for all model types.</p>
         </div>
         <p class="hint" style="margin-top:4px;">Recommended for GPR and Linear. Not required for Random Forest (tree splits are scale-invariant).</p>
       </div>
@@ -778,12 +840,12 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
           </div>
         </div>
         <div id="help-exploration" class="help-card" style="display:none;margin-bottom:10px;">
-          <p>Each prediction you run is plotted here so you can track how your design point compares to the training data envelope (blue band). Use this to explore the design space systematically — vary one input at a time and watch how the outputs change.</p>
+          <p>Each prediction you run is plotted here so you can track how your design point compares to the training data envelope (grey band). Use this to explore the design space systematically — vary one input at a time and watch how the outputs change.</p>
           <p>The ± bar on each dot is the model's uncertainty (±1σ). Taller bars = less confident prediction, usually far from your training data.</p>
         </div>
         <div id="exploration-charts"></div>
         <p style="font-size:11px;color:var(--text-muted);margin-top:8px;">
-          Blue band = training data range · Dashed line = training mean · Blue dot = latest prediction · Grey dots = previous predictions · Vertical bars = model uncertainty (±1σ)
+          Grey band = training data range · Dashed line = training mean · Blue dot = latest prediction · Grey dots = previous predictions · Vertical bars = model uncertainty (±1σ)
         </p>
       </div>
     </div>
@@ -1208,7 +1270,11 @@ function renderResults(data) {
     const refInputsHtml = data.feature_cols.map(f => {
       const median = appState.featureMedians && appState.featureMedians[f] !== undefined
         ? Number(appState.featureMedians[f]).toPrecision(4) : '';
-      return `<span style="white-space:nowrap;margin-right:4px;">${escHtml(f)}: <input type="number" step="any" id="sens-ref-${escHtml(target)}-${escHtml(f)}" value="${escHtml(median)}" style="width:65px;font-size:11px;padding:2px 4px;border:1px solid var(--border);border-radius:4px;background:white;" onchange="loadSensIfActive('${escHtml(target)}')"></span>`;
+      const stats = appState.summary && appState.summary.stats && appState.summary.stats[f];
+      const rangeHint = stats
+        ? `<div style="font-size:10px;color:var(--text-muted);margin-top:1px;">${Number(stats.min).toPrecision(3)} – ${Number(stats.max).toPrecision(3)}</div>`
+        : '';
+      return `<span style="white-space:nowrap;margin-right:8px;display:inline-block;margin-bottom:4px;">${escHtml(f)}: <input type="number" step="any" id="sens-ref-${escHtml(target)}-${escHtml(f)}" value="${escHtml(median)}" style="width:65px;font-size:11px;padding:2px 4px;border:1px solid var(--border);border-radius:4px;background:white;" onchange="loadSensIfActive('${escHtml(target)}')">${rangeHint}</span>`;
     }).join('');
 
     html += `
@@ -1298,8 +1364,9 @@ function renderResults(data) {
               <option value="">— select feature —</option>
               ${sensitivityOptions}
             </select>
+            <div id="sens-range-${escHtml(target)}" style="display:none;font-size:11px;color:var(--text-muted);margin-top:3px;"></div>
           </div>
-          <details style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">
+          <details open style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">
             <summary style="cursor:pointer;padding:3px 0;">Reference point (other features held here)</summary>
             <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;">${refInputsHtml}</div>
           </details>
@@ -1397,6 +1464,11 @@ async function loadSensitivity(selectEl) {
     const data = await res.json();
     if (!res.ok) { alert(data.error); return; }
     imgEl.src = 'data:image/png;base64,' + data.plot_b64;
+    const rangeEl = document.getElementById(`sens-range-${target}`);
+    if (rangeEl && data.train_lo !== undefined && data.train_hi !== undefined) {
+      rangeEl.textContent = `Training range: ${Number(data.train_lo).toPrecision(4)} — ${Number(data.train_hi).toPrecision(4)}`;
+      rangeEl.style.display = 'block';
+    }
     sensBox.style.display = 'block';
   } catch (e) {
     alert('Failed to load sensitivity plot: ' + e.message);
@@ -1961,7 +2033,7 @@ function renderExplorationPlots() {
     const meanY = sy(trainMean);
 
     let svg = `
-      <rect x="${PAD.left}" y="${bandTop.toFixed(1)}" width="${plotW}" height="${bandH.toFixed(1)}" fill="#dbeafe" opacity="0.55"/>
+      <rect x="${PAD.left}" y="${bandTop.toFixed(1)}" width="${plotW}" height="${bandH.toFixed(1)}" fill="#e2e8f0" opacity="0.7"/>
       <line x1="${PAD.left}" y1="${meanY.toFixed(1)}" x2="${PAD.left + plotW}" y2="${meanY.toFixed(1)}" stroke="#93c5fd" stroke-width="1.5" stroke-dasharray="5,3"/>
       <line x1="${PAD.left}" y1="${PAD.top}" x2="${PAD.left}" y2="${PAD.top + plotH}" stroke="#cbd5e1" stroke-width="1"/>
       <line x1="${PAD.left}" y1="${PAD.top + plotH}" x2="${PAD.left + plotW}" y2="${PAD.top + plotH}" stroke="#cbd5e1" stroke-width="1"/>`;

@@ -122,19 +122,22 @@ def set_columns():
     # Detect IQR outliers before optional exclusion
     outlier_info = data_utils.get_outlier_flags(df_clean, feature_cols + target_cols)
 
+    # Collect outlier rows for pairplot ghost overlay (before any exclusion)
+    all_outlier_idx = set()
+    for col_flags in outlier_info.values():
+        all_outlier_idx.update(col_flags['row_indices'])
+    outlier_df = df_clean.loc[sorted(all_outlier_idx)] if all_outlier_idx else None
+
     # Optionally exclude detected outlier rows
     n_outliers_excluded = 0
     if body.get('exclude_outliers', False) and outlier_info:
-        rows_to_drop = set()
-        for col_flags in outlier_info.values():
-            rows_to_drop.update(col_flags['row_indices'])
-        if rows_to_drop:
-            df_clean = df_clean.drop(index=sorted(rows_to_drop)).reset_index(drop=True)
-            n_outliers_excluded = len(rows_to_drop)
+        if all_outlier_idx:
+            df_clean = df_clean.drop(index=sorted(all_outlier_idx)).reset_index(drop=True)
+            n_outliers_excluded = len(all_outlier_idx)
             n_dropped += n_outliers_excluded
 
     pairplot_b64 = data_utils.get_pairplot_b64(
-        df_clean, feature_cols + target_cols, max_cols=8
+        df_clean, feature_cols + target_cols, max_cols=8, outlier_df=outlier_df
     )
 
     _reset_downstream(state, level='columns')
@@ -464,10 +467,17 @@ def sensitivity():
     bootstrap_models = state['results'][target].get('bootstrap_models', [])
     plot_b64 = ml_engine.get_sensitivity_plot_b64(
         pipeline, X_ref, feature_cols, feature_idx, target, model_type, x_sweep,
-        bootstrap_models=bootstrap_models
+        bootstrap_models=bootstrap_models,
+        train_lo=float(lo), train_hi=float(hi),
     )
 
-    return jsonify({'plot_b64': plot_b64, 'feature': feature, 'target': target})
+    return jsonify({
+        'plot_b64': plot_b64,
+        'feature': feature,
+        'target': target,
+        'train_lo': float(lo),
+        'train_hi': float(hi),
+    })
 
 
 # ---------------------------------------------------------------------------

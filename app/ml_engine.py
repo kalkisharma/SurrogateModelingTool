@@ -206,8 +206,12 @@ def get_feature_importance_plot_b64(pipeline, feature_names, model_type, target_
 
 def get_sensitivity_plot_b64(pipeline, X_ref, feature_names, feature_idx,
                               target_name, model_type, x_sweep,
-                              bootstrap_models=None):
-    """1D sensitivity plot with ±1σ uncertainty band for all model types."""
+                              bootstrap_models=None, train_lo=None, train_hi=None):
+    """1D sensitivity plot with ±1σ uncertainty band for all model types.
+
+    train_lo/train_hi: training data min/max for the swept feature — drawn as
+    vertical boundary lines with faint orange extrapolation shading outside.
+    """
     X_sweep = np.tile(X_ref, (len(x_sweep), 1))
     X_sweep[:, feature_idx] = x_sweep
 
@@ -234,6 +238,19 @@ def get_sensitivity_plot_b64(pipeline, X_ref, feature_names, feature_idx,
 
     ref_val = float(X_ref[0, feature_idx])
     ax.axvline(ref_val, color='grey', linestyle='--', lw=1, alpha=0.7, label='reference')
+
+    # Training data boundary lines + faint extrapolation shading
+    if train_lo is not None:
+        ax.axvline(train_lo, color='#94a3b8', linestyle='--', lw=1, alpha=0.7,
+                   label='training min')
+    if train_hi is not None:
+        ax.axvline(train_hi, color='#94a3b8', linestyle='--', lw=1, alpha=0.7,
+                   label='training max')
+    if train_lo is not None and train_hi is not None:
+        xmin, xmax = ax.get_xlim()
+        ax.axvspan(xmin, train_lo, alpha=0.07, color='#f97316', zorder=0)
+        ax.axvspan(train_hi, xmax, alpha=0.07, color='#f97316', zorder=0)
+        ax.set_xlim(xmin, xmax)  # restore after axvspan may expand limits
 
     ax.set_xlabel(feature_names[feature_idx])
     ax.set_ylabel(target_name)

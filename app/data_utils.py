@@ -112,8 +112,11 @@ def get_outlier_flags(df, cols):
     return flags
 
 
-def get_pairplot_b64(df, columns, max_cols=8):
+def get_pairplot_b64(df, columns, max_cols=8, outlier_df=None):
     """Render a scatter matrix for up to max_cols numeric columns.
+
+    outlier_df: optional DataFrame of outlier rows to overlay as hollow orange
+    circles on every off-diagonal subplot (shown regardless of exclusion state).
 
     Returns a base64-encoded PNG string, or '' if fewer than 2 numeric cols.
     """
@@ -123,8 +126,9 @@ def get_pairplot_b64(df, columns, max_cols=8):
     if len(df_plot.columns) < 2:
         return ''
 
+    plot_cols = df_plot.columns.tolist()
     fig, axes = plt.subplots(
-        len(df_plot.columns), len(df_plot.columns),
+        len(plot_cols), len(plot_cols),
         figsize=(10, 10)
     )
     scatter_matrix(
@@ -135,6 +139,19 @@ def get_pairplot_b64(df, columns, max_cols=8):
         hist_kwds={'bins': 15, 'color': '#2563EB', 'edgecolor': 'white'},
         color='#2563EB',
     )
+
+    # Overlay outlier rows as hollow orange circles on off-diagonal subplots
+    if outlier_df is not None and len(outlier_df) > 0:
+        outlier_numeric = outlier_df[[c for c in plot_cols if c in outlier_df.columns]]
+        for i, row_col in enumerate(plot_cols):
+            for j, col_col in enumerate(plot_cols):
+                if i != j and row_col in outlier_numeric.columns and col_col in outlier_numeric.columns:
+                    axes[i, j].scatter(
+                        outlier_numeric[col_col], outlier_numeric[row_col],
+                        facecolors='none', edgecolors='#f97316',
+                        s=70, linewidths=1.8, zorder=5, alpha=0.9,
+                    )
+
     fig.patch.set_facecolor('white')
     plt.tight_layout()
 
