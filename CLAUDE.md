@@ -65,6 +65,13 @@ surrogate_tool/
 | Config export | `GET /api/download/config` → surrogate_config.json | Reproducibility — engineers share configs and use them in pipelines |
 | UI style | Clean light theme, accent `#2563EB` | Professional engineering tool aesthetic |
 | Flask compat | `attachment_filename=` in `send_file` | Flask 1.1.2 installed on this machine (NOT Flask 2.x `download_name=`) |
+| Bootstrap uncertainty | 100-pipeline bootstrap for Linear; tree-variance for RF; native for GPR | All 3 model types expose ±σ in predictions and sensitivity plots |
+| Jargon policy | Engineering meaning first, ML term in parentheses — tool-wide | Target user (A/B knowledge) stalls at Step 2 without plain-English labels |
+| Model auto-recommendation | Recommends model based on row count + feature count; pre-selects and explains | Engineer should not have to understand GPR vs RF trade-offs from scratch |
+| `?` help cards | Every plot, metric, and panel header has an inline expandable explanation | Self-teaching tool — no external documentation needed |
+| Plot captions | Static caption on parity/residuals/importance; dynamic on learning curve + health banner | Engineers need immediate reading of each chart, not just labels |
+| Prediction explorer | Client-side SVG chart accumulating up to 20 predictions vs training envelope | Visual design space exploration without additional CFD runs |
+| Exploration download | Client-side CSV blob from `appState.explorationHistory` — no server route | All 20 entries downloadable; no server state change needed |
 
 ---
 
@@ -155,16 +162,17 @@ All routes are on the `main` Blueprint, registered with no URL prefix.
 | POST | `/api/predict` | JSON body (single) OR multipart file (batch) | `{predictions, feature_cols, target_cols, model_type, extrapolation_warnings}` |
 | GET | `/api/sensitivity` | `?feature=X&target=Y[&ref_<col>=val...]` | `{plot_b64, feature, target}` |
 | GET | `/api/surface` | `?feature_x=X&feature_y=Y&target=Z` | `{plot_b64, feature_x, feature_y, target}` |
+| GET | `/api/learning_curve` | `?target=Y` | `{plot_b64, target, final_train_r2, final_val_r2, val_still_rising}` |
 
 ### Critical route implementation notes
 
 **`/api/upload`**: saves to `uploads/{timestamp}_{secure_filename}`. Calls `_reset_downstream(state, 'upload')` to wipe all downstream state on every new upload. Also resets `train_history`.
 
-**`/api/set_columns`**: validates no column appears in both lists; rejects non-numeric targets; calls `clean_data()` then `get_pairplot_b64()`; calls `_reset_downstream(state, 'columns')` to clear training results.
+**`/api/set_columns`**: validates no column appears in both lists; rejects non-numeric targets; calls `clean_data()` then `get_pairplot_b64()`; calls `_reset_downstream(state, 'columns')` to clear training results. Accepts optional `exclude_outliers: bool` to exclude IQR-flagged rows before pairplot. Returns `outlier_info` dict (from `get_outlier_flags()`), `n_outliers_excluded`, `n_rows` (post-clean row count).
 
-**`/api/train`**: calls `train_all()` from `ml_engine`. GPR warning set if `n_rows > 2000`. Response strips the `pipeline` object (not JSON-serializable) — the pipeline stays in `STATE['results'][target]['pipeline']` in RAM. Appends to `STATE['train_history']` (capped at 3 entries). RF params `max_depth` and `min_samples_leaf` are read from the request body; `max_depth=0` is converted to `None` (unlimited).
+**`/api/train`**: calls `train_all()` from `ml_engine`. GPR warning set if `n_rows > 2000`. Response strips the `pipeline` object (not JSON-serializable) — the pipeline stays in `STATE['results'][target]['pipeline']` in RAM. Appends to `STATE['train_history']` (capped at 3 entries). RF params `max_depth` and `min_samples_leaf` are read from the request body; `max_depth=0` is converted to `None` (unlimited). Response also includes `feature_medians: {col: float}` used to pre-fill sensitivity reference inputs.
 
-**`/api/predict`**: detects mode by `request.content_type`. Always runs `check_extrapolation()` and returns `extrapolation_warnings` list. For GPR std output, bypasses the Pipeline to call `gpr.predict(X_scaled, return_std=True)` directly — sklearn Pipeline does NOT forward `return_std=True`. Pattern:
+**`/api/predict`**: detects mode by `request.content_type`. Always runs `check_extrapolation()` and returns `extrapolation_warnings` list. Returns `{target}_std` fields for each target when available: GPR uses native std, RF uses tree-level variance (`_rf_std()`), Linear uses bootstrap std (`_bootstrap_std()`). For GPR std output, bypasses the Pipeline to call `gpr.predict(X_scaled, return_std=True)` directly — sklearn Pipeline does NOT forward `return_std=True`. Pattern:
 ```python
 gpr = pipeline.named_steps['model']
 if 'scaler' in pipeline.named_steps:
@@ -223,11 +231,18 @@ steps += [('model', RandomForestRegressor(
 ```
 Note: `config` param is only used for RF. Pass `None` or `{}` for linear/GPR.
 
+### Uncertainty Helpers
+- `_gpr_std(pipeline, X)` — bypasses Pipeline, calls `gpr.predict(X_scaled, return_std=True)`
+- `_rf_std(pipeline, X)` — tree-level variance: `np.std([t.predict(X) for t in rf.estimators_], axis=0)`; zero extra training
+- `_bootstrap_std(bootstrap_models, X)` — std across 100 bootstrap-resampled linear pipelines stored in `results[target]['bootstrap_models']`
+- `N_BOOTSTRAP = 100` constant controls linear bootstrap count
+
 ### `train_all()` — Main Training Function
 - For each target column: builds pipeline, fits, computes metrics, generates plots, saves joblib
 - CV: fits a **fresh** identical pipeline on `np.vstack([X_train, X_test])` to avoid data leakage
 - Returns dict keyed by target name; the `pipeline` key holds the fitted object in RAM
 - After GPR fit, checks `optimized_length_scales` for values ≥ 500 → populates `irrelevant_feature_warnings`
+- For Linear model: also trains 100 bootstrap pipelines stored in `results[target]['bootstrap_models']`
 
 ### Plot Functions (all return base64 PNG str)
 - `get_parity_plot_b64(y_true, y_pred, target_name)` — 5×5 in, scatter + diagonal line
@@ -236,9 +251,11 @@ Note: `config` param is only used for RF. Pass `None` or `{}` for linear/GPR.
   - Linear: `np.abs(coef) / sum` → horizontal bar chart
   - GPR: `1 / (length_scales + 1e-12)` normalized → horizontal bar chart
   - RF: `pipeline.named_steps['model'].feature_importances_` → horizontal bar chart (MDI)
-- `get_sensitivity_plot_b64(pipeline, X_ref, feature_names, feature_idx, target_name, model_type, x_sweep)`:
+- `get_learning_curve_plot_b64(train_sizes, train_scores, val_scores, target_name)` — blue train / red val R² vs dataset size
+- `get_sensitivity_plot_b64(pipeline, X_ref, feature_names, feature_idx, target_name, model_type, x_sweep, bootstrap_models=None)`:
   - GPR: bypasses Pipeline for `return_std=True` → shaded ±1σ band
-  - Linear/RF: standard `pipeline.predict()` → plain line
+  - RF: `_rf_std()` → shaded ±1σ band
+  - Linear: `_bootstrap_std(bootstrap_models, ...)` → shaded ±1σ band (pass `bootstrap_models` from `STATE['results']`)
   - Adds vertical dashed line at reference value
 - `get_surface_plot_b64(pipeline, X_ref, feature_names, idx_x, idx_y, target_name, model_type, x_range, y_range, n_grid=30)`:
   - Builds 30×30 meshgrid, tiles X_ref, replaces idx_x and idx_y columns
@@ -279,6 +296,11 @@ Caps at 8 columns. Uses `pandas.plotting.scatter_matrix` (no seaborn dependency)
 The pairplot for a test dataset with constant-value columns will emit matplotlib warnings
 about "identical left == right" — these are harmless.
 
+### `get_outlier_flags(df, cols) → dict`
+IQR-based outlier detection per column. Returns dict `{col: {row_indices, lo, hi, values}}`.
+Only columns with at least one outlier are included. Skips non-numeric and zero-IQR (constant) columns.
+Called in `/api/set_columns`. Frontend renders results in the outlier panel with `renderOutlierPanel()`.
+
 ---
 
 ## Frontend Architecture (`index.html`)
@@ -303,6 +325,8 @@ Single-file SPA — inline `<style>` and `<script>`, no external dependencies.
 const appState = {
     featureCols: [], targetCols: [], summary: null,
     modelType: 'linear', trained: false, currentStep: 1,
+    featureMedians: {},        // {col: float} — pre-filled from /api/train response
+    explorationHistory: [],    // client-side only, max 20 entries {inputs, predictions}
 };
 const STEP_GATES = {
     2: () => appState.featureCols.length > 0,
@@ -312,7 +336,7 @@ const STEP_GATES = {
 function goToStep(n) { /* checks gate, swaps .active class, updates progress bar */ }
 ```
 
-**Important:** Step 4 calls `buildStep4()` on navigation to dynamically generate the prediction form and download links. `buildStep4()` is called by overriding `window.goToStep`.
+**Important:** Step 4 calls `buildStep4()` on navigation to dynamically generate the prediction form and download links. `buildStep4()` is called by overriding `window.goToStep`. The override also handles Step 2: populates dataset summary and fires `applyModelRecommendation()`.
 
 ### Key DOM Element IDs
 | ID | Purpose |
@@ -352,6 +376,34 @@ function goToStep(n) { /* checks gate, swaps .active class, updates progress bar
 | `batch-extrap-warning` | Yellow warning banner for batch extrapolation |
 | `batch-file-input` | CSV file input for batch prediction |
 | `download-preds-link` | Shown after batch prediction completes |
+| `upload-quality-msg` | Row-count quality alert shown immediately after upload |
+| `dataset-health-card` | Feature-to-run ratio card shown after column confirmation |
+| `step2-dataset-summary` | Compact "N runs · F features" line at top of Step 2 |
+| `step2-row-count` / `step2-feature-count` | Populated when navigating to Step 2 |
+| `model-recommendation-banner` | Auto-recommendation alert with plain-English reason |
+| `rec-model-name` / `rec-reason` | Spans inside recommendation banner |
+| `exploration-plot-panel` | SVG prediction explorer panel in Step 4 |
+| `exploration-x-feature` | `<select>` for X-axis of exploration chart |
+| `exploration-charts` | Container for per-target SVG exploration charts |
+| `download-exploration-btn` | Shown after first prediction; downloads exploration_history.csv |
+| `lc-caption-{target}` | Dynamic caption text below learning curve plot label |
+| `help-metrics-{target}` | Metric help card per target (R², RMSE, MAE explanations) |
+| `help-plot-{type}-{target}` | Per-plot per-target help cards (parity/residuals/importance/sens/surface/lc) |
+
+### Key JS Functions Added in UX Upgrade
+| Function | Purpose |
+|---|---|
+| `toggleHelp(id)` | Show/hide any `.help-card` div by ID |
+| `getRowCountMessage(nRows)` | Returns `{type, text}` upload quality message |
+| `renderDatasetHealthCard(nRows, nFeatures)` | Renders feature-to-run ratio card into `#dataset-health-card` |
+| `recommendModel(nRows, nFeatures)` | Returns `{model, name, reason}` recommendation object |
+| `applyModelRecommendation(nRows, nFeatures)` | Applies recommendation to banner + dropdown |
+| `renderModelHealth(results, targetCols)` | Returns HTML string for colour-coded health banner |
+| `confidenceBadge(value, std)` | Returns HTML badge: High/Moderate/Low confidence with ±σ |
+| `learningCurveCaption(d)` | Returns 1-line diagnostic caption from `final_train_r2`, `final_val_r2`, `val_still_rising` |
+| `renderExplorationPlots()` | Rebuilds all SVG exploration charts from `appState.explorationHistory` |
+| `clearExplorationHistory()` | Empties `appState.explorationHistory` and re-renders |
+| `downloadExplorationHistory()` | Client-side CSV blob download from `appState.explorationHistory` |
 
 ### Sensitivity Plot Flow
 1. User selects a feature from `<select class="sensitivity-feature-select" data-target="{target}">`
@@ -373,6 +425,20 @@ function goToStep(n) { /* checks gate, swaps .active class, updates progress bar
 3. Current run row has class `current-row` (blue highlight, bold, ★ label)
 4. History panel hidden until first training run
 
+### Learning Curve Flow
+1. User clicks "Show Learning Curve" button per target in Step 3
+2. `loadLearningCurve(target)` fetches `/api/learning_curve?target=Y`
+3. Response includes `plot_b64`, `final_train_r2`, `final_val_r2`, `val_still_rising`
+4. `learningCurveCaption(data)` generates a 1-line diagnostic; set into `#lc-caption-{target}`
+
+### Prediction Explorer Flow (Step 4)
+1. After `predictSingle()` succeeds, entry `{inputs, predictions}` is pushed to `appState.explorationHistory`
+2. `renderExplorationPlots()` is called; renders one inline SVG per target
+3. SVG shows: blue band (training min/max), dashed mean line, dots per prediction, ±1σ error bars
+4. X-axis: exploration sequence by default; any feature column via `#exploration-x-feature` select
+5. Max 20 entries — oldest dropped when full; `clearExplorationHistory()` resets
+6. `downloadExplorationHistory()` builds CSV blob client-side (no server route)
+
 ### Plot Rendering Pattern (all plots)
 ```javascript
 imgElement.src = 'data:image/png;base64,' + data.some_b64_field;
@@ -383,7 +449,12 @@ imgElement.src = 'data:image/png;base64,' + data.some_b64_field;
 ## Git History
 
 ```
-(latest)  feat: add random forest, 2D surface plot, extrapolation warnings, model comparison history
+(latest)  feat: aerospace engineer UX upgrade — self-teaching surrogate tool
+b78f6f6   feat: aerospace engineer UX upgrade — self-teaching surrogate tool
+          (onboarding panel, auto-recommendation, model health banner, plot captions,
+           ? cards, confidence badges, prediction explorer, dynamic LC caption)
+          (prior commits covered Tier 2+3: RF, GPR, learning curves, bootstrap uncertainty,
+           outlier detection, 2D surface, extrapolation warnings, model history)
 5f1fd38   feat: add four additional sample datasets with generator scripts
 cd297ee   feat: add NACA 0012 sample dataset (96 rows) and generator script for tutorial use
 c8050b1   docs: add CLAUDE.md with full codebase context for future development sessions
@@ -458,35 +529,34 @@ conda run -n base python my_test.py
 For a full end-to-end test, create a CSV with at least 10 rows, 2+ numeric feature columns,
 and 1+ numeric target columns, then use the browser UI.
 
-**Verification checklist for the Tier 2 upgrade:**
-1. Upload NACA 0012 sample → select columns → confirm
-2. Step 2: Select Random Forest → verify green rf-panel appears with max_depth + min_samples_leaf
-3. Step 3: Train RF → verify feature importance shows "MDI" label; verify 2D surface selects appear
-4. Step 3: Select X/Y axes for 2D surface → verify contour plot loads
-5. Step 3: Train GPR → verify history table shows 2 rows; verify current row is highlighted
-6. Step 3: (with a near-constant column) verify feature relevance warning fires
-7. Step 4: Enter a value outside the training range → verify yellow extrapolation warning appears
-8. Step 4: Click "Export Config JSON" → verify download with model_type, feature_cols, etc.
+**Verification checklist (full UX upgrade):**
+1. Open tool — confirm improved subtitle visible; "What is a surrogate model?" panel expands/collapses
+2. Upload NACA 0012 (96 rows) — confirm green "good dataset size" message appears immediately
+3. Upload a tiny dataset (< 20 rows) — confirm red warning appears
+4. Confirm columns — confirm Dataset Health card renders with ratio assessment; outlier `?` card works
+5. Navigate to Step 2 — confirm compact "Dataset: 96 rows · 4 input features" visible; GPR pre-selected; recommendation banner shows correct reason
+6. Switch model type manually — confirm banner text doesn't change but dropdown follows
+7. Train GPR — confirm model health banner shows green "Good fit"; R² card is green; gap shown
+8. Train Linear (expect poor fit) — confirm health banner amber/red with next steps listed
+9. Click each plot's `?` button — confirm help card expands and collapses correctly
+10. Click "Show Learning Curve" — confirm dynamic caption appears below plot label
+11. Go to Step 4 — enter prediction inside training range (GPR) — confirm confidence badge is green
+12. Enter value outside training range — confirm low-confidence badge + extrapolation warning both appear
+13. Enter 5 predictions — confirm exploration plot builds up with shaded training band visible
+14. Change X-axis dropdown to a feature — confirm plot re-renders in feature space
+15. Click "⬇ Download History" — confirm CSV has correct columns and values
+16. Click "Clear" — confirm plot resets and download button hides
+17. Step 3: Check outlier `?` card explains IQR, why it matters, when to exclude
+18. Step 3: Train RF → verify "200 trees" info panel visible; 2D surface selects appear
 
 ---
 
 ## Deferred Features (Next Iteration)
 
-These were scoped out of Tier 2 but agreed upon in the design session:
-
-- **Learning curves (on-demand)**: `GET /api/learning_curve?target=Y` using sklearn `learning_curve()`.
-  Diagnoses underfitting vs overfitting. "Show Learning Curve" button per target in Step 3.
-
-- **Bootstrap uncertainty for Linear/RF**: Train 100 bootstrap-resampled pipelines, store predictions,
-  expose ±1σ in sensitivity plots and predictions table. GPR already has native std — keep that.
-  For RF, tree-level variance (`[t.predict(X) for t in rf.estimators_]`) is more efficient than bootstrap.
-
-- **Outlier detection**: IQR-based flagging at `/api/set_columns` time. Collapsible panel in Step 1
-  with checkbox to exclude flagged rows before training. Add `get_outlier_flags(df, cols)` to `data_utils.py`.
-
-- **Custom sensitivity reference point (Step 3 form)**: Already partially implemented —
-  `/api/sensitivity` accepts `ref_<col>=value` params and Step 4 form values are passed via
-  `buildRefParams()`. The Step 3 sensitivity panel could have its own inline reference inputs
-  for use before navigating to Step 4.
-
 - **Flask 2.x upgrade**: Change all 4 `attachment_filename=` → `download_name=` in `routes.py`.
+
+- **Batch prediction confidence**: `predictBatch()` currently shows row count only; could show per-row std columns in the downloaded CSV (already computed server-side, just not surfaced in batch response).
+
+- **Step 3 sensitivity reference live update**: Reference inputs in the Step 3 sensitivity panel already work (`sens-ref-{target}-{col}` inputs). Could add a "Update all sensitivity plots" button to reload all visible plots at once after changing multiple reference values.
+
+- **Multi-target exploration chart layout**: When 3+ targets are selected, exploration charts stack vertically. Could move to a 2-column grid for space efficiency.
