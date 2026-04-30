@@ -291,8 +291,12 @@ Checks each feature column in `X_input` (shape `[n_rows, n_features]`) against `
 Returns one warning string per out-of-range feature. For batch input, counts total rows outside range.
 Called in `/api/predict` before running model predictions. Never blocks — warnings only.
 
-### `get_pairplot_b64(df, columns, max_cols=8) → str`
+### `get_pairplot_b64(df, columns, max_cols=8, outlier_df=None) → str`
 Caps at 8 columns. Uses `pandas.plotting.scatter_matrix` (no seaborn dependency).
+Optional `outlier_df`: DataFrame of outlier rows to overlay as hollow orange circles on every
+off-diagonal subplot. Overlay is drawn post-scatter_matrix by iterating `axes[i,j]` and calling
+`ax.scatter(facecolors='none', edgecolors='#f97316', ...)`. Passed from `/api/set_columns` using
+rows collected *before* the exclude_outliers step, so the ghost overlay always shows.
 The pairplot for a test dataset with constant-value columns will emit matplotlib warnings
 about "identical left == right" — these are harmless.
 
@@ -449,7 +453,11 @@ imgElement.src = 'data:image/png;base64,' + data.some_b64_field;
 ## Git History
 
 ```
-(latest)  feat: aerospace engineer UX upgrade — self-teaching surrogate tool
+(latest)  feat: Round 2 UX — outlier pairplot overlay, Step 2 help cards, sensitivity range display, grey exploration chart
+0e0cbc5   feat: Round 2 UX — outlier pairplot overlay, Step 2 help cards, sensitivity range display, grey exploration chart
+          (pairplot orange ghost overlay; 5x ? cards in Step 2; sensitivity training-range lines+text;
+           reference inputs open by default with min-max hints; exploration chart grey #e2e8f0)
+          feat: aerospace engineer UX upgrade — self-teaching surrogate tool
 b78f6f6   feat: aerospace engineer UX upgrade — self-teaching surrogate tool
           (onboarding panel, auto-recommendation, model health banner, plot captions,
            ? cards, confidence badges, prediction explorer, dynamic LC caption)
@@ -529,25 +537,36 @@ conda run -n base python my_test.py
 For a full end-to-end test, create a CSV with at least 10 rows, 2+ numeric feature columns,
 and 1+ numeric target columns, then use the browser UI.
 
-**Verification checklist (full UX upgrade):**
+**Verification checklist (full UX upgrade including Round 2):**
 1. Open tool — confirm improved subtitle visible; "What is a surrogate model?" panel expands/collapses
 2. Upload NACA 0012 (96 rows) — confirm green "good dataset size" message appears immediately
 3. Upload a tiny dataset (< 20 rows) — confirm red warning appears
 4. Confirm columns — confirm Dataset Health card renders with ratio assessment; outlier `?` card works
-5. Navigate to Step 2 — confirm compact "Dataset: 96 rows · 4 input features" visible; GPR pre-selected; recommendation banner shows correct reason
-6. Switch model type manually — confirm banner text doesn't change but dropdown follows
-7. Train GPR — confirm model health banner shows green "Good fit"; R² card is green; gap shown
-8. Train Linear (expect poor fit) — confirm health banner amber/red with next steps listed
-9. Click each plot's `?` button — confirm help card expands and collapses correctly
-10. Click "Show Learning Curve" — confirm dynamic caption appears below plot label
-11. Go to Step 4 — enter prediction inside training range (GPR) — confirm confidence badge is green
-12. Enter value outside training range — confirm low-confidence badge + extrapolation warning both appear
-13. Enter 5 predictions — confirm exploration plot builds up with shaded training band visible
-14. Change X-axis dropdown to a feature — confirm plot re-renders in feature space
-15. Click "⬇ Download History" — confirm CSV has correct columns and values
-16. Click "Clear" — confirm plot resets and download button hides
-17. Step 3: Check outlier `?` card explains IQR, why it matters, when to exclude
-18. Step 3: Train RF → verify "200 trees" info panel visible; 2D surface selects appear
+5. If outliers flagged: confirm pairplot shows hollow orange circles on flagged rows
+6. Toggle "Exclude flagged rows" ON → confirm pairplot regenerates with orange circles still shown on excluded rows
+7. Navigate to Step 2 — confirm compact "Dataset: 96 rows · 4 input features" visible; GPR pre-selected; recommendation banner shows correct reason
+8. Switch model type manually — confirm banner text doesn't change but dropdown follows
+9. Click `?` on "Model Type" → confirm comparison table expands (5 rows × 4 columns: Best for / Accuracy / Speed / Uncertainty / Non-linear)
+10. Select GPR → click `?` on "Kernel" → confirm RBF vs Matérn card expands with engineering language (C_L, C_D, stall reference)
+11. Verify improved hint text on Length Scale and Alpha inputs
+12. Click `?` on "Train / Test Split" → confirm proof-test explanation with 96-run example
+13. Click `?` on "Enable k-fold Cross-Validation" → confirm k-groups explanation
+14. Click `?` on "Normalize inputs" → confirm scale explanation with AoA vs Mach example
+15. Train GPR — confirm model health banner shows green "Good fit"; R² card is green; gap shown
+16. Train Linear (expect poor fit) — confirm health banner amber/red with next steps listed
+17. Click each plot's `?` button — confirm help card expands and collapses correctly
+18. Click "Show Learning Curve" — confirm dynamic caption appears below plot label
+19. Sensitivity: select a feature → confirm "Training range: X — Y" appears below dropdown
+20. Confirm reference inputs `<details>` is open by default and each input shows min–max range hint
+21. Confirm sensitivity plot has two grey dashed boundary lines and faint orange shading outside bounds
+22. Go to Step 4 — enter prediction inside training range (GPR) — confirm confidence badge is green
+23. Enter value outside training range — confirm low-confidence badge + extrapolation warning both appear
+24. Enter 5 predictions — confirm exploration plot has grey (#e2e8f0) training band (not blue)
+25. Confirm legend reads "Grey band = training data range"
+26. Change X-axis dropdown to a feature — confirm plot re-renders in feature space
+27. Click "⬇ Download History" — confirm CSV has correct columns and values
+28. Click "Clear" — confirm plot resets and download button hides
+29. Step 3: Train RF → verify "200 trees" info panel visible; 2D surface selects appear
 
 ---
 
