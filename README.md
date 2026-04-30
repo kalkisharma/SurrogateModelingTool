@@ -56,6 +56,24 @@ The browser opens automatically at `http://localhost:5000`.
 
 4. **Step 4 — Predict & Export**: Download the trained model(s) as `.joblib` files. Enter a single design point manually or upload a new CSV to get batch predictions. Download predictions as a CSV.
 
+## Sample Datasets
+
+Five ready-to-use datasets are provided in `sample_data/`. Run the corresponding generator script to (re)produce each CSV:
+
+| File | Rows | Inputs | Outputs | Demonstrates |
+|---|---|---|---|---|
+| `naca0012_airfoil.csv` | 96 | alpha, Mach, Re | CL, CD, CM | Baseline subsonic airfoil; good first dataset |
+| `transonic_naca0012.csv` | 96 | alpha, Mach, Re | CL, CD, CM | Cubic drag divergence — Linear Reg fails, GPR captures it |
+| `naca4digit_family.csv` | 150 | camber, camber pos, thickness, alpha, Mach | CL, CD, CM | ARD reveals camber→CL/CM, thickness→CD |
+| `wing_design_space.csv` | 200 | AR, sweep, taper, t/c, CL_design, Mach | CD_induced, CD_wave, CD_profile, L/D | 6-input, 4-output; distinct feature sensitivities per output |
+| `rocket_nozzle.csv` | 120 | chamber pressure, area ratio, ambient pressure, chamber temp, gamma | Cf, Isp, Ve | Propulsion domain; isentropic physics; log-uniform ambient pressure |
+
+Regenerate any CSV from the project root:
+```bash
+conda activate base
+python sample_data/generate_transonic.py
+```
+
 ## Notes
 
 - GPR is recommended for datasets up to ~1,000 rows. A warning is shown for datasets larger than 2,000 rows.
