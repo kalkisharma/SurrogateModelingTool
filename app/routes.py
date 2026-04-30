@@ -1,4 +1,5 @@
 import io
+import json
 import os
 import time
 
@@ -25,6 +26,7 @@ def _reset_downstream(state, level='upload'):
             'df_raw': None, 'df_clean': None, 'upload_filename': '',
             'summary': None, 'pairplot_b64': None,
             'feature_cols': [], 'target_cols': [], 'n_dropped': 0,
+            'train_history': [],
         })
     if level in ('upload', 'columns'):
         state.update({
@@ -151,8 +153,17 @@ def train():
     feature_cols = state['feature_cols']
     target_cols = state['target_cols']
 
+    model_type = body.get('model_type', 'linear')
+
+    # Parse max_depth: 0 or missing → None (unlimited)
+    raw_max_depth = body.get('max_depth', 0)
+    try:
+        max_depth = int(raw_max_depth) or None
+    except (ValueError, TypeError):
+        max_depth = None
+
     config = {
-        'model_type': body.get('model_type', 'linear'),
+        'model_type': model_type,
         'kernel_type': body.get('kernel_type', 'rbf'),
         'length_scale': float(body.get('length_scale', 1.0)),
         'alpha': float(body.get('alpha', 1e-6)),
@@ -161,6 +172,8 @@ def train():
         'cv_k': int(body.get('cv_k', 5)),
         'normalize': bool(body.get('normalize', True)),
         'feature_cols': feature_cols,
+        'max_depth': max_depth,
+        'min_samples_leaf': int(body.get('min_samples_leaf', 1)),
     }
     state['train_config'] = config
 
@@ -169,7 +182,7 @@ def train():
     if config['model_type'] == 'gpr' and n_rows > 2000:
         gpr_warning = (
             f'Warning: GPR training on {n_rows} rows may be very slow (O(n³) complexity). '
-            f'Consider Linear Regression for datasets larger than 2,000 rows.'
+            f'Consider Linear Regression or Random Forest for datasets larger than 2,000 rows.'
         )
     state['gpr_warning'] = gpr_warning
 
@@ -196,6 +209,17 @@ def train():
     state['trained'] = True
     state['last_predictions'] = None
 
+    # Update lightweight training history (keep last 3)
+    history_entry = {
+        'model_type': config['model_type'],
+        'kernel_type': config['kernel_type'] if config['model_type'] == 'gpr' else '—',
+        'timestamp': time.strftime('%H:%M:%S'),
+        'metrics': {t: {'r2_test': results[t]['metrics_test']['r2']} for t in target_cols},
+    }
+    history = state.get('train_history', [])
+    history.append(history_entry)
+    state['train_history'] = history[-3:]
+
     # Build JSON-serializable response (exclude the pipeline objects)
     results_json = {}
     for target, res in results.items():
@@ -208,6 +232,7 @@ def train():
             'feat_importance_b64': res['feat_importance_b64'],
             'optimized_kernel_str': res['optimized_kernel_str'],
             'optimized_length_scales': res['optimized_length_scales'],
+            'irrelevant_feature_warnings': res['irrelevant_feature_warnings'],
         }
 
     return jsonify({
@@ -217,6 +242,7 @@ def train():
         'feature_cols': feature_cols,
         'target_cols': target_cols,
         'results': results_json,
+        'train_history': state['train_history'],
     })
 
 
@@ -257,6 +283,26 @@ def download_predictions():
         as_attachment=True,
         attachment_filename='predictions.csv',
         mimetype='text/csv',
+    )
+
+
+@main.route('/api/download/config')
+def download_config():
+    state = _state()
+    if not state['trained']:
+        return jsonify({'error': 'No trained model. Complete Step 3 first.'}), 400
+
+    cfg = {k: v for k, v in state['train_config'].items() if k != 'feature_cols'}
+    cfg['feature_cols'] = state['feature_cols']
+    cfg['target_cols'] = state['target_cols']
+
+    buf = io.BytesIO(json.dumps(cfg, indent=2).encode('utf-8'))
+    buf.seek(0)
+    return send_file(
+        buf,
+        as_attachment=True,
+        attachment_filename='surrogate_config.json',
+        mimetype='application/json',
     )
 
 
@@ -306,6 +352,9 @@ def predict():
             return jsonify({'error': 'No valid rows in uploaded CSV after removing NaNs.'}), 400
         X_input = df_new.values
 
+    # Extrapolation check
+    extrap_warnings = data_utils.check_extrapolation(X_input, state['df_clean'], feature_cols)
+
     # Run predictions
     pred_rows = [{} for _ in range(len(X_input))]
     for col in feature_cols:
@@ -338,6 +387,7 @@ def predict():
         'feature_cols': feature_cols,
         'target_cols': target_cols,
         'model_type': model_type,
+        'extrapolation_warnings': extrap_warnings,
     })
 
 
@@ -364,7 +414,15 @@ def sensitivity():
     df_clean = state['df_clean']
     feature_idx = feature_cols.index(feature)
 
+    # Build reference point — use query params if provided, else median
     X_ref = df_clean[feature_cols].median().values.reshape(1, -1)
+    for i, col in enumerate(feature_cols):
+        param_val = request.args.get(f'ref_{col}')
+        if param_val is not None:
+            try:
+                X_ref[0, i] = float(param_val)
+            except ValueError:
+                pass
 
     col_vals = df_clean[feature].values
     lo = col_vals.min()
@@ -380,3 +438,59 @@ def sensitivity():
     )
 
     return jsonify({'plot_b64': plot_b64, 'feature': feature, 'target': target})
+
+
+# ---------------------------------------------------------------------------
+# 2D Response Surface
+# ---------------------------------------------------------------------------
+
+@main.route('/api/surface')
+def surface():
+    state = _state()
+    if not state['trained']:
+        return jsonify({'error': 'No trained model.'}), 400
+
+    feature_x = request.args.get('feature_x', '')
+    feature_y = request.args.get('feature_y', '')
+    target = request.args.get('target', '')
+    feature_cols = state['feature_cols']
+    target_cols = state['target_cols']
+
+    if feature_x not in feature_cols:
+        return jsonify({'error': f'Unknown feature_x: {feature_x}'}), 400
+    if feature_y not in feature_cols:
+        return jsonify({'error': f'Unknown feature_y: {feature_y}'}), 400
+    if feature_x == feature_y:
+        return jsonify({'error': 'feature_x and feature_y must be different.'}), 400
+    if target not in target_cols:
+        return jsonify({'error': f'Unknown target: {target}'}), 400
+
+    df_clean = state['df_clean']
+    idx_x = feature_cols.index(feature_x)
+    idx_y = feature_cols.index(feature_y)
+
+    X_ref = df_clean[feature_cols].median().values.reshape(1, -1)
+
+    def _range(col):
+        vals = df_clean[col].values
+        lo, hi = vals.min(), vals.max()
+        rng = hi - lo if hi > lo else 1.0
+        return (lo - 0.05 * rng, hi + 0.05 * rng)
+
+    x_range = _range(feature_x)
+    y_range = _range(feature_y)
+
+    pipeline = state['results'][target]['pipeline']
+    model_type = state['train_config']['model_type']
+
+    plot_b64 = ml_engine.get_surface_plot_b64(
+        pipeline, X_ref, feature_cols, idx_x, idx_y,
+        target, model_type, x_range, y_range
+    )
+
+    return jsonify({
+        'plot_b64': plot_b64,
+        'feature_x': feature_x,
+        'feature_y': feature_y,
+        'target': target,
+    })

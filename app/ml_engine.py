@@ -5,11 +5,12 @@ import os
 import joblib
 import matplotlib.pyplot as plt
 import numpy as np
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel, Matern
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-from sklearn.model_selection import cross_val_score, train_test_split
+from sklearn.model_selection import cross_val_score
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
@@ -35,7 +36,7 @@ def build_kernel(kernel_type, n_features, length_scale):
     return amplitude * base
 
 
-def build_pipeline(model_type, kernel, alpha, normalize):
+def build_pipeline(model_type, kernel, alpha, normalize, config=None):
     steps = []
     if normalize:
         steps.append(('scaler', StandardScaler()))
@@ -46,6 +47,16 @@ def build_pipeline(model_type, kernel, alpha, normalize):
             alpha=float(alpha),
             normalize_y=True,
             n_restarts_optimizer=5,
+            random_state=42,
+        )
+    elif model_type == 'rf':
+        cfg = config or {}
+        max_depth = cfg.get('max_depth', None)
+        min_samples_leaf = int(cfg.get('min_samples_leaf', 1))
+        estimator = RandomForestRegressor(
+            n_estimators=200,
+            max_depth=max_depth if max_depth and int(max_depth) > 0 else None,
+            min_samples_leaf=min_samples_leaf,
             random_state=42,
         )
     else:
@@ -137,11 +148,14 @@ def get_feature_importance_plot_b64(pipeline, feature_names, model_type, target_
         importance = coef / (coef.sum() + 1e-12)
         xlabel = 'Normalized |Coefficient|'
         title = f'Feature Importance — {target_name}'
-    else:
+    elif model_type == 'rf':
+        importance = pipeline.named_steps['model'].feature_importances_
+        xlabel = 'Mean Decrease in Impurity'
+        title = f'Feature Importance (RF) — {target_name}'
+    else:  # gpr
         gpr = pipeline.named_steps['model']
         ls = gpr.kernel_.get_params().get('k2__length_scale', None)
         if ls is None:
-            # fallback: single length scale kernel
             ls = np.ones(n)
         ls = np.atleast_1d(ls)
         importance = 1.0 / (ls + 1e-12)
@@ -195,6 +209,59 @@ def get_sensitivity_plot_b64(pipeline, X_ref, feature_names, feature_idx,
     return _fig_to_b64(fig)
 
 
+def get_surface_plot_b64(pipeline, X_ref, feature_names, idx_x, idx_y,
+                          target_name, model_type, x_range, y_range, n_grid=30):
+    """2D response surface. For GPR: side-by-side mean + σ. Others: mean only."""
+    x_vals = np.linspace(x_range[0], x_range[1], n_grid)
+    y_vals = np.linspace(y_range[0], y_range[1], n_grid)
+    xx, yy = np.meshgrid(x_vals, y_vals)
+
+    X_grid = np.tile(X_ref, (n_grid * n_grid, 1))
+    X_grid[:, idx_x] = xx.ravel()
+    X_grid[:, idx_y] = yy.ravel()
+
+    if model_type == 'gpr':
+        gpr = pipeline.named_steps['model']
+        X_s = pipeline.named_steps['scaler'].transform(X_grid) if 'scaler' in pipeline.named_steps else X_grid
+        z_mean, z_std = gpr.predict(X_s, return_std=True)
+        z_mean = z_mean.reshape(n_grid, n_grid)
+        z_std = z_std.reshape(n_grid, n_grid)
+
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
+        fig.patch.set_facecolor('white')
+
+        cf1 = ax1.contourf(xx, yy, z_mean, levels=20, cmap='Blues')
+        ax1.contour(xx, yy, z_mean, levels=10, colors='white', linewidths=0.4, alpha=0.5)
+        plt.colorbar(cf1, ax=ax1, label=target_name)
+        ax1.set_xlabel(feature_names[idx_x])
+        ax1.set_ylabel(feature_names[idx_y])
+        ax1.set_title(f'Mean Prediction — {target_name}')
+        ax1.set_facecolor('white')
+
+        cf2 = ax2.contourf(xx, yy, z_std, levels=20, cmap='Oranges')
+        plt.colorbar(cf2, ax=ax2, label='σ')
+        ax2.set_xlabel(feature_names[idx_x])
+        ax2.set_ylabel(feature_names[idx_y])
+        ax2.set_title(f'Uncertainty (σ) — {target_name}')
+        ax2.set_facecolor('white')
+    else:
+        z_mean = pipeline.predict(X_grid).reshape(n_grid, n_grid)
+
+        fig, ax = plt.subplots(figsize=(6, 4))
+        fig.patch.set_facecolor('white')
+
+        cf = ax.contourf(xx, yy, z_mean, levels=20, cmap='Blues')
+        ax.contour(xx, yy, z_mean, levels=10, colors='white', linewidths=0.4, alpha=0.5)
+        plt.colorbar(cf, ax=ax, label=target_name)
+        ax.set_xlabel(feature_names[idx_x])
+        ax.set_ylabel(feature_names[idx_y])
+        ax.set_title(f'Response Surface — {target_name}')
+        ax.set_facecolor('white')
+
+    plt.tight_layout()
+    return _fig_to_b64(fig)
+
+
 # ---------------------------------------------------------------------------
 # Model persistence
 # ---------------------------------------------------------------------------
@@ -225,12 +292,9 @@ def train_all(X_train, X_test, y_dict_train, y_dict_test, config, models_dir):
         y_train = y_dict_train[target_name]
         y_test = y_dict_test[target_name]
 
-        if model_type == 'gpr':
-            kernel = build_kernel(config['kernel_type'], n_features, config['length_scale'])
-        else:
-            kernel = None
+        kernel = build_kernel(config['kernel_type'], n_features, config['length_scale']) if model_type == 'gpr' else None
 
-        pipeline = build_pipeline(model_type, kernel, config['alpha'], config['normalize'])
+        pipeline = build_pipeline(model_type, kernel, config['alpha'], config['normalize'], config)
         pipeline.fit(X_train, y_train)
 
         y_pred_train = pipeline.predict(X_train)
@@ -247,7 +311,7 @@ def train_all(X_train, X_test, y_dict_train, y_dict_test, config, models_dir):
                 if model_type == 'gpr' else None
             )
             fresh_pipeline = build_pipeline(model_type, fresh_kernel,
-                                            config['alpha'], config['normalize'])
+                                            config['alpha'], config['normalize'], config)
             scores = cross_val_score(fresh_pipeline, X_full, y_full,
                                      cv=int(config['cv_k']), scoring='r2')
             cv_score = round(float(scores.mean()), 6)
@@ -262,13 +326,21 @@ def train_all(X_train, X_test, y_dict_train, y_dict_test, config, models_dir):
 
         optimized_kernel_str = None
         optimized_length_scales = None
+        irrelevant_feature_warnings = []
+
         if model_type == 'gpr':
             gpr = pipeline.named_steps['model']
             optimized_kernel_str = str(gpr.kernel_)
             ls = gpr.kernel_.get_params().get('k2__length_scale', None)
             if ls is not None:
-                optimized_length_scales = [round(float(v), 6)
-                                           for v in np.atleast_1d(ls)]
+                optimized_length_scales = [round(float(v), 6) for v in np.atleast_1d(ls)]
+                for feat, ls_val in zip(feature_names, optimized_length_scales):
+                    if ls_val >= 500:
+                        irrelevant_feature_warnings.append(
+                            f"'{feat}' has length scale λ={ls_val:.0f} (near upper bound 1000). "
+                            f"It may not contribute meaningfully to predicting '{target_name}'. "
+                            f"Consider removing it for a cleaner model."
+                        )
 
         model_path = save_model(pipeline, target_name, models_dir)
 
@@ -283,6 +355,7 @@ def train_all(X_train, X_test, y_dict_train, y_dict_test, config, models_dir):
             'feat_importance_b64': feat_importance_b64,
             'optimized_kernel_str': optimized_kernel_str,
             'optimized_length_scales': optimized_length_scales,
+            'irrelevant_feature_warnings': irrelevant_feature_warnings,
         }
 
     return results

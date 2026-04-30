@@ -64,6 +64,24 @@ def clean_data(df, feature_cols, target_cols):
     return df_clean, n_dropped
 
 
+def check_extrapolation(X_input, df_clean, feature_cols):
+    """Return warning strings for any feature value outside the training [min, max] range.
+
+    For batch inputs, checks all rows and returns one warning per out-of-range feature.
+    """
+    out_of_range = {}
+    for i, col in enumerate(feature_cols):
+        lo = float(df_clean[col].min())
+        hi = float(df_clean[col].max())
+        col_vals = X_input[:, i]
+        n_below = int((col_vals < lo).sum())
+        n_above = int((col_vals > hi).sum())
+        if n_below > 0 or n_above > 0:
+            val_str = f'{float(col_vals[0]):.4g}' if len(col_vals) == 1 else f'{n_below + n_above} row(s)'
+            out_of_range[col] = f"'{col}': {val_str} outside training range [{lo:.4g}, {hi:.4g}]"
+    return list(out_of_range.values())
+
+
 def get_pairplot_b64(df, columns, max_cols=8):
     """Render a scatter matrix for up to max_cols numeric columns.
 

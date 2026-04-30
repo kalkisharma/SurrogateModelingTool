@@ -281,6 +281,14 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
   margin-top: 8px;
   margin-bottom: 8px;
 }
+#rf-panel {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  padding: 16px;
+  margin-top: 8px;
+  margin-bottom: 8px;
+}
 
 /* Spinner */
 #loading-spinner {
@@ -347,6 +355,19 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
 .sensitivity-controls { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
 .sensitivity-controls label { font-size: 13px; color: var(--text-muted); }
 
+/* 2D surface panel */
+.surface-panel {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  margin-top: 16px;
+  background: var(--panel);
+  grid-column: 1 / -1;
+}
+.surface-panel h5 { font-size: 13px; font-weight: 600; margin-bottom: 10px; }
+.surface-controls { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+.surface-controls label { font-size: 13px; color: var(--text-muted); }
+
 /* Optimized kernel display */
 .kernel-info {
   background: #f0fdf4;
@@ -378,6 +399,13 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
   padding-bottom: 10px;
   border-bottom: 1px solid var(--border);
 }
+
+/* Model comparison history table */
+.history-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 20px; }
+.history-table th { background: var(--panel); padding: 7px 12px; text-align: left; font-weight: 600; border-bottom: 2px solid var(--border); color: var(--text-muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+.history-table td { padding: 7px 12px; border-bottom: 1px solid var(--border); }
+.history-table tr:last-child td { border-bottom: none; }
+.history-table .current-row td { background: #eff6ff; font-weight: 600; }
 
 /* Prediction form */
 .input-grid {
@@ -512,6 +540,7 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
         <select id="model-type" onchange="onModelTypeChange()">
           <option value="linear">Linear Regression</option>
           <option value="gpr">Gaussian Process Regression (GPR)</option>
+          <option value="rf">Random Forest</option>
         </select>
       </div>
 
@@ -534,6 +563,29 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
           <p class="hint">Regularization added to kernel diagonal. Use 1e-6 for clean CFD data; higher (0.01–0.1) for noisy measurements.</p>
         </div>
         <div class="alert alert-info">Hyperparameters are auto-optimized via L-BFGS-B (5 random restarts). Optimized values are shown after training.</div>
+      </div>
+
+      <div id="rf-panel" style="display:none">
+        <div class="form-group">
+          <label for="rf-max-depth">Max Tree Depth</label>
+          <select id="rf-max-depth">
+            <option value="0">Unlimited — may overfit small datasets</option>
+            <option value="3">3 — very smooth, high bias</option>
+            <option value="5" selected>5 — balanced (recommended)</option>
+            <option value="10">10 — low bias, risk of overfit on small data</option>
+          </select>
+          <p class="hint">Controls overfitting. Shallower trees are smoother surrogate surfaces; deeper trees fit more precisely.</p>
+        </div>
+        <div class="form-group">
+          <label for="rf-min-samples">Min Samples per Leaf</label>
+          <select id="rf-min-samples">
+            <option value="1" selected>1 — standard</option>
+            <option value="2">2 — slight smoothing</option>
+            <option value="5">5 — strong smoothing, fewer wiggles</option>
+          </select>
+          <p class="hint">Minimum training points at each leaf. Higher values smooth the response surface. Use 2–5 for noisy data.</p>
+        </div>
+        <div class="alert alert-info" style="background:#f0fdf4;border-color:#16a34a;color:#166534;">200 trees trained. Feature importance uses Mean Decrease in Impurity (MDI). Faster than GPR on large datasets.</div>
       </div>
 
       <div class="form-group">
@@ -560,7 +612,7 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
           <input type="checkbox" id="normalize" checked>
           <label for="normalize" style="margin-bottom:0;">Normalize inputs (StandardScaler)</label>
         </div>
-        <p class="hint" style="margin-top:4px;">Recommended — ensures all features are on the same scale before training.</p>
+        <p class="hint" style="margin-top:4px;">Recommended for GPR and Linear. Not required for Random Forest (tree splits are scale-invariant).</p>
       </div>
     </div>
 
@@ -586,6 +638,11 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
       </div>
     </div>
 
+    <div id="history-panel" style="display:none" class="panel">
+      <div class="panel-title">Training History (last 3 runs)</div>
+      <div id="history-table-wrapper"></div>
+    </div>
+
     <div id="results-panel" style="display:none"></div>
 
     <div class="nav-row">
@@ -603,18 +660,25 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
     </div>
 
     <div class="panel">
-      <div class="panel-title">Download Models</div>
+      <div class="panel-title">Download Models &amp; Export</div>
       <div id="download-grid" class="download-grid"></div>
-      <a id="download-preds-link" href="/api/download/predictions" download
-         class="btn btn-secondary btn-download" style="display:none;margin-top:8px;">
-        ⬇ Download Predictions CSV
-      </a>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;">
+        <a id="download-preds-link" href="/api/download/predictions" download
+           class="btn btn-secondary btn-download" style="display:none;">
+          ⬇ Download Predictions CSV
+        </a>
+        <a href="/api/download/config" download
+           class="btn btn-secondary btn-download">
+          ⬇ Export Config JSON
+        </a>
+      </div>
     </div>
 
     <div class="panel">
       <div class="panel-title">Single-Point Prediction</div>
       <p style="font-size:13px;color:var(--text-muted);margin-bottom:16px;">Enter one design point to query the surrogate instantly.</p>
       <div id="single-point-form"></div>
+      <div id="extrap-warning" class="alert alert-warning" style="display:none;margin-top:12px;"></div>
       <div id="single-error" class="alert alert-error" style="display:none;margin-top:12px;"></div>
       <div id="single-result" style="display:none;"></div>
     </div>
@@ -629,6 +693,7 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
       <input type="file" id="batch-file-input" accept=".csv" style="margin-bottom:10px;">
       <br>
       <button class="btn btn-primary" onclick="predictBatch()">Predict Batch</button>
+      <div id="batch-extrap-warning" class="alert alert-warning" style="display:none;margin-top:12px;"></div>
       <div id="batch-error" class="alert alert-error" style="display:none;margin-top:12px;"></div>
       <div id="batch-result-summary" style="display:none;"></div>
     </div>
@@ -875,8 +940,9 @@ async function confirmColumns() {
 // Step 2
 // ---------------------------------------------------------------------------
 function onModelTypeChange() {
-  const isGpr = document.getElementById('model-type').value === 'gpr';
-  document.getElementById('gpr-panel').style.display = isGpr ? 'block' : 'none';
+  const val = document.getElementById('model-type').value;
+  document.getElementById('gpr-panel').style.display = val === 'gpr' ? 'block' : 'none';
+  document.getElementById('rf-panel').style.display = val === 'rf' ? 'block' : 'none';
 }
 
 // ---------------------------------------------------------------------------
@@ -899,6 +965,8 @@ async function runTraining() {
     use_cv: document.getElementById('use-cv').checked,
     cv_k: parseInt(document.getElementById('cv-k').value) || 5,
     normalize: document.getElementById('normalize').checked,
+    max_depth: parseInt(document.getElementById('rf-max-depth').value) || 0,
+    min_samples_leaf: parseInt(document.getElementById('rf-min-samples').value) || 1,
   };
 
   let data;
@@ -934,8 +1002,44 @@ async function runTraining() {
   appState.modelType = data.model_type;
   appState.trained = true;
 
+  renderHistory(data.train_history, data.target_cols);
   renderResults(data);
   document.getElementById('step3-next-btn').disabled = false;
+}
+
+function renderHistory(history, targetCols) {
+  if (!history || history.length === 0) return;
+  const panel = document.getElementById('history-panel');
+  const wrapper = document.getElementById('history-table-wrapper');
+
+  // Build header columns for each target
+  const targetHeaders = targetCols.map(t => `<th>R² ${escHtml(t)}</th>`).join('');
+  let html = `<table class="history-table"><thead><tr>
+    <th>Run</th><th>Model</th><th>Kernel</th><th>Time</th>${targetHeaders}
+  </tr></thead><tbody>`;
+
+  history.forEach((entry, idx) => {
+    const isCurrent = idx === history.length - 1;
+    const rowClass = isCurrent ? 'current-row' : '';
+    const label = isCurrent ? `${idx + 1} ★` : `${idx + 1}`;
+    const modelLabel = entry.model_type === 'gpr' ? 'GPR' :
+                       entry.model_type === 'rf'  ? 'Random Forest' : 'Linear';
+    const targetCells = targetCols.map(t => {
+      const r2 = entry.metrics && entry.metrics[t] ? entry.metrics[t].r2_test : '—';
+      return `<td>${typeof r2 === 'number' ? r2.toFixed(4) : r2}</td>`;
+    }).join('');
+    html += `<tr class="${rowClass}">
+      <td>${label}</td>
+      <td>${modelLabel}</td>
+      <td>${escHtml(entry.kernel_type || '—')}</td>
+      <td>${escHtml(entry.timestamp || '')}</td>
+      ${targetCells}
+    </tr>`;
+  });
+
+  html += '</tbody></table>';
+  wrapper.innerHTML = html;
+  panel.style.display = 'block';
 }
 
 function renderResults(data) {
@@ -955,7 +1059,15 @@ function renderResults(data) {
         ${renderLsTable(res.optimized_length_scales, data.feature_cols)}
       </div>` : '';
 
+    const relevanceWarnings = (res.irrelevant_feature_warnings || []).map(w =>
+      `<div class="alert alert-warning" style="margin-top:8px;font-size:12px;">${escHtml(w)}</div>`
+    ).join('');
+
     const sensitivityOptions = data.feature_cols.map(f =>
+      `<option value="${escHtml(f)}">${escHtml(f)}</option>`
+    ).join('');
+
+    const surfaceFeatureOptions = data.feature_cols.map(f =>
       `<option value="${escHtml(f)}">${escHtml(f)}</option>`
     ).join('');
 
@@ -984,6 +1096,7 @@ function renderResults(data) {
 
       ${cvHtml}
       ${kernelHtml}
+      ${relevanceWarnings}
 
       <div class="plot-grid">
         <div class="plot-box">
@@ -1012,6 +1125,27 @@ function renderResults(data) {
             <img id="sensitivity-plot-${escHtml(target)}" src="" alt="Sensitivity plot" style="width:100%">
           </div>
         </div>
+
+        ${data.feature_cols.length >= 2 ? `
+        <div class="surface-panel">
+          <h5>2D Response Surface</h5>
+          <div class="surface-controls">
+            <label>X axis:</label>
+            <select class="surface-x-select" data-target="${escHtml(target)}" onchange="loadSurface('${escHtml(target)}')">
+              <option value="">— select —</option>
+              ${surfaceFeatureOptions}
+            </select>
+            <label style="margin-left:8px;">Y axis:</label>
+            <select class="surface-y-select" data-target="${escHtml(target)}" onchange="loadSurface('${escHtml(target)}')">
+              <option value="">— select —</option>
+              ${surfaceFeatureOptions}
+            </select>
+            <span id="surface-loading-${escHtml(target)}" style="display:none;font-size:12px;color:var(--text-muted);">Computing…</span>
+          </div>
+          <div class="plot-box" id="surface-box-${escHtml(target)}" style="display:none">
+            <img id="surface-plot-${escHtml(target)}" src="" alt="Response surface" style="width:100%">
+          </div>
+        </div>` : ''}
       </div>
     </div>`;
   }
@@ -1046,8 +1180,12 @@ async function loadSensitivity(selectEl) {
   const imgEl = document.getElementById(`sensitivity-plot-${target}`);
   sensBox.style.display = 'none';
 
+  // Build reference point from Step 4 form if available
+  const refParams = buildRefParams();
+
   try {
-    const res = await fetch(`/api/sensitivity?feature=${encodeURIComponent(feature)}&target=${encodeURIComponent(target)}`);
+    const url = `/api/sensitivity?feature=${encodeURIComponent(feature)}&target=${encodeURIComponent(target)}${refParams}`;
+    const res = await fetch(url);
     const data = await res.json();
     if (!res.ok) { alert(data.error); return; }
     imgEl.src = 'data:image/png;base64,' + data.plot_b64;
@@ -1057,14 +1195,54 @@ async function loadSensitivity(selectEl) {
   }
 }
 
+async function loadSurface(target) {
+  const xSelect = document.querySelector(`.surface-x-select[data-target="${CSS.escape(target)}"]`);
+  const ySelect = document.querySelector(`.surface-y-select[data-target="${CSS.escape(target)}"]`);
+  const featureX = xSelect ? xSelect.value : '';
+  const featureY = ySelect ? ySelect.value : '';
+  if (!featureX || !featureY || featureX === featureY) return;
+
+  const surfaceBox = document.getElementById(`surface-box-${target}`);
+  const imgEl = document.getElementById(`surface-plot-${target}`);
+  const loadingEl = document.getElementById(`surface-loading-${target}`);
+  surfaceBox.style.display = 'none';
+  if (loadingEl) loadingEl.style.display = 'inline';
+
+  try {
+    const url = `/api/surface?feature_x=${encodeURIComponent(featureX)}&feature_y=${encodeURIComponent(featureY)}&target=${encodeURIComponent(target)}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (loadingEl) loadingEl.style.display = 'none';
+    if (!res.ok) { alert(data.error); return; }
+    imgEl.src = 'data:image/png;base64,' + data.plot_b64;
+    surfaceBox.style.display = 'block';
+  } catch (e) {
+    if (loadingEl) loadingEl.style.display = 'none';
+    alert('Failed to load surface plot: ' + e.message);
+  }
+}
+
+function buildRefParams() {
+  let params = '';
+  for (const col of appState.featureCols) {
+    const el = document.getElementById(`inp-${col}`);
+    if (el && el.value !== '' && !isNaN(parseFloat(el.value))) {
+      params += `&ref_${encodeURIComponent(col)}=${encodeURIComponent(el.value)}`;
+    }
+  }
+  return params;
+}
+
 // ---------------------------------------------------------------------------
 // Step 4 — Predict & Export
 // ---------------------------------------------------------------------------
 function buildStep4() {
   // Model summary
+  const modelLabel = appState.modelType === 'gpr' ? 'Gaussian Process Regression' :
+                     appState.modelType === 'rf'  ? 'Random Forest (200 trees)' : 'Linear Regression';
   const summaryHtml = `
     <div class="summary-grid">
-      <div class="summary-card"><div class="label">Model Type</div><div class="value">${appState.modelType === 'gpr' ? 'Gaussian Process Regression' : 'Linear Regression'}</div></div>
+      <div class="summary-card"><div class="label">Model Type</div><div class="value">${modelLabel}</div></div>
       <div class="summary-card"><div class="label">Features</div><div class="value">${appState.featureCols.join(', ')}</div></div>
       <div class="summary-card"><div class="label">Targets</div><div class="value">${appState.targetCols.join(', ')}</div></div>
     </div>`;
@@ -1104,8 +1282,6 @@ function buildStep4() {
   document.getElementById('batch-feature-hint').textContent = appState.featureCols.join(', ');
 }
 
-document.getElementById('step-4').addEventListener('transitionend', () => {});
-
 // Hook step4 setup on navigation
 const origGoToStep = goToStep;
 window.goToStep = function(n) {
@@ -1113,8 +1289,21 @@ window.goToStep = function(n) {
   if (n === 4 && appState.trained) buildStep4();
 };
 
+function showExtrapWarnings(warnings, elId) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  if (warnings && warnings.length > 0) {
+    el.innerHTML = '<strong>Extrapolation warning</strong> — the following inputs are outside the training data range:<br>' +
+      warnings.map(w => `• ${escHtml(w)}`).join('<br>');
+    el.style.display = 'block';
+  } else {
+    el.style.display = 'none';
+  }
+}
+
 async function predictSingle() {
   clearError('single-error');
+  clearError('extrap-warning');
   const inputs = {};
   for (const col of appState.featureCols) {
     const val = document.getElementById(`inp-${col}`).value;
@@ -1139,6 +1328,8 @@ async function predictSingle() {
     return;
   }
 
+  showExtrapWarnings(data.extrapolation_warnings, 'extrap-warning');
+
   const pred = data.predictions[0];
   let tableHtml = '<table class="result-table"><thead><tr>';
   const keys = Object.keys(pred).filter(k => !appState.featureCols.includes(k));
@@ -1154,6 +1345,7 @@ async function predictSingle() {
 
 async function predictBatch() {
   clearError('batch-error');
+  clearError('batch-extrap-warning');
   document.getElementById('batch-result-summary').style.display = 'none';
   document.getElementById('download-preds-link').style.display = 'none';
 
@@ -1172,6 +1364,8 @@ async function predictBatch() {
     showError('batch-error', 'Network error: ' + e.message);
     return;
   }
+
+  showExtrapWarnings(data.extrapolation_warnings, 'batch-extrap-warning');
 
   const summaryEl = document.getElementById('batch-result-summary');
   summaryEl.textContent = `✓ ${data.predictions.length} predictions generated.`;

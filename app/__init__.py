@@ -29,6 +29,7 @@ def _initial_state():
         'gpr_warning': None,
         'results': {},
         'last_predictions': None,
+        'train_history': [],
     }
 
 
