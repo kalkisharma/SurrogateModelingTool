@@ -450,6 +450,35 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
 
 /* Batch results */
 #batch-result-summary { font-size: 13px; color: var(--success); font-weight: 600; margin-top: 8px; }
+
+/* Help buttons and cards */
+.btn-help {
+  display:inline-flex; align-items:center; justify-content:center;
+  width:16px; height:16px; border-radius:50%;
+  background:var(--accent); color:white;
+  font-size:9px; font-weight:700; cursor:pointer;
+  border:none; flex-shrink:0; vertical-align:middle; margin-left:5px;
+  line-height:1;
+}
+.btn-help:hover { background:var(--accent-hover); }
+.help-card {
+  background:#eff6ff; border:1px solid #bfdbfe; border-radius:7px;
+  padding:12px 14px; font-size:12px; color:#1e3a5f;
+  margin-top:8px; line-height:1.7;
+}
+.help-card p { margin-bottom:8px; }
+.help-card p:last-child { margin-bottom:0; }
+
+/* Confidence badges */
+.conf-badge { font-size:11px; padding:2px 8px; border-radius:4px; margin-left:6px; font-weight:600; }
+.conf-high { background:#dcfce7; color:#166534; }
+.conf-med  { background:#fef3c7; color:#92400e; }
+.conf-low  { background:#fee2e2; color:#991b1b; }
+
+/* Exploration plot */
+.exploration-chart { border:1px solid var(--border); border-radius:8px; overflow:hidden; margin-bottom:12px; }
+.exploration-chart-title { background:var(--panel); padding:6px 12px; font-size:12px; font-weight:600; color:var(--text-muted); border-bottom:1px solid var(--border); }
+.lc-caption { font-size:12px; color:var(--text-muted); padding:6px 12px 0; font-style:italic; }
 </style>
 </head>
 <body>
@@ -457,7 +486,7 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
 
   <header>
     <h1>Surrogate Modeling Tool</h1>
-    <p>CFD &amp; Aerodynamic Surrogate Builder — all data stays on your machine</p>
+    <p>Train a fast mathematical model on your CFD runs, then predict aerodynamic outputs for thousands of new design points without running the solver again — all data stays on your machine</p>
   </header>
 
   <div id="progress-bar">
@@ -475,6 +504,26 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
     </div>
   </div>
 
+  <!-- Onboarding explainer -->
+  <div class="panel" style="margin-bottom:20px;">
+    <details>
+      <summary style="font-size:14px;font-weight:600;cursor:pointer;color:var(--accent);list-style:none;display:flex;align-items:center;gap:8px;">
+        <span>&#9658;</span> What is a surrogate model? — click to learn before you start
+      </summary>
+      <div style="padding-top:14px;font-size:13px;line-height:1.8;color:var(--text);">
+        <p>A surrogate model is a fast mathematical approximation trained on a small set of CFD runs.
+        <strong>Example:</strong> run 100 RANS simulations across your angle-of-attack and Mach number envelope,
+        upload the results here, and the surrogate predicts C<sub>L</sub> and C<sub>D</sub> for 10,000 new
+        design points in seconds — without queuing another solver job.</p>
+        <p style="margin-top:8px;">Works for any tabular simulation data: aerodynamic, structural, thermal, or propulsion.
+        One row per simulation run, design parameters as input columns, outputs as separate columns.</p>
+        <p style="margin-top:8px;"><strong>Minimum data:</strong> 30+ simulation runs recommended.
+        Gaussian Process Regression (GPR) works well from 30–500 rows.
+        Random Forest from 100–2,000 rows.</p>
+      </div>
+    </details>
+  </div>
+
   <!-- ===== STEP 1 ===== -->
   <div id="step-1" class="step-panel active">
 
@@ -488,6 +537,7 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
       </div>
       <div id="upload-error" class="alert alert-error" style="display:none;margin-top:12px;"></div>
       <div id="upload-status" style="margin-top:10px;font-size:13px;color:var(--text-muted);"></div>
+      <div id="upload-quality-msg" style="display:none;margin-top:8px;font-size:13px;"></div>
     </div>
 
     <div class="panel" id="summary-panel" style="display:none">
@@ -523,12 +573,16 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
       <div id="drop-info" class="alert alert-warning" style="display:none;margin-top:12px;"></div>
 
       <div id="outlier-panel" style="display:none;margin-top:12px;border:1px solid var(--warning-border);border-radius:8px;padding:12px 16px;background:var(--warning-bg);">
-        <details id="outlier-details-toggle">
-          <summary style="font-size:13px;font-weight:600;cursor:pointer;color:#92400e;">
-            ⚠ IQR Outlier Detection — <span id="outlier-summary-text"></span>
-          </summary>
-          <div id="outlier-details" style="margin-top:10px;font-size:12px;color:var(--text);"></div>
-        </details>
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+          <span style="font-size:13px;font-weight:600;color:#92400e;">⚠ Outlier Detection — <span id="outlier-summary-text"></span></span>
+          <button class="btn-help" onclick="toggleHelp('outlier-help')">?</button>
+        </div>
+        <div id="outlier-help" class="help-card" style="display:none;">
+          <p><strong>How it detects outliers:</strong> We measure the typical spread of each column using the interquartile range (IQR) — the gap between the 25th and 75th percentile values. Any data point more than 1.5× that gap above or below the middle is flagged.</p>
+          <p><strong>Why it matters for your surrogate:</strong> A single anomalous CFD run — a diverged solution or transcription error — can pull the fitted model away from your real operating envelope, reducing accuracy across the entire design space.</p>
+          <p><strong>When to exclude:</strong> Exclude if the flagged row represents a numerical error or physically impossible condition. Keep it if it is a real edge-case design point — but expect lower surrogate accuracy in that region.</p>
+        </div>
+        <div id="outlier-details" style="margin-top:6px;font-size:12px;color:var(--text);"></div>
         <div style="margin-top:10px;">
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#92400e;">
             <input type="checkbox" id="exclude-outliers-cb" onchange="toggleOutlierExclusion()" style="accent-color:var(--accent);width:14px;height:14px;">
@@ -537,6 +591,8 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
           <div id="outlier-excluded-info" class="alert alert-success" style="display:none;margin-top:8px;font-size:12px;"></div>
         </div>
       </div>
+
+      <div id="dataset-health-card" style="display:none;margin-top:12px;"></div>
     </div>
 
     <div class="nav-row">
@@ -549,14 +605,23 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
   <div id="step-2" class="step-panel">
 
     <div class="panel">
+      <div id="step2-dataset-summary" style="display:none;font-size:12px;color:var(--text-muted);margin-bottom:14px;padding:6px 12px;background:var(--panel);border-radius:6px;border:1px solid var(--border);">
+        Dataset: <strong id="step2-row-count">—</strong> simulation runs · <strong id="step2-feature-count">—</strong> input features
+      </div>
+
+      <div id="model-recommendation-banner" class="alert alert-info" style="display:none;margin-bottom:16px;">
+        <strong>Recommended:</strong> <span id="rec-model-name"></span> — <span id="rec-reason"></span>
+        <div style="font-size:12px;color:#1e40af;margin-top:4px;">You can override this selection below.</div>
+      </div>
+
       <div class="panel-title">Model Configuration</div>
 
       <div class="form-group">
         <label for="model-type">Model Type</label>
         <select id="model-type" onchange="onModelTypeChange()">
-          <option value="linear">Linear Regression</option>
-          <option value="gpr">Gaussian Process Regression (GPR)</option>
-          <option value="rf">Random Forest</option>
+          <option value="linear">Linear Regression — fast baseline, works on any dataset size</option>
+          <option value="gpr">Gaussian Process Regression (GPR) — most accurate on small datasets, gives uncertainty estimates</option>
+          <option value="rf">Random Forest — best for medium-to-large datasets, robust to outliers</option>
         </select>
       </div>
 
@@ -697,6 +762,30 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
       <div id="extrap-warning" class="alert alert-warning" style="display:none;margin-top:12px;"></div>
       <div id="single-error" class="alert alert-error" style="display:none;margin-top:12px;"></div>
       <div id="single-result" style="display:none;"></div>
+
+      <div id="exploration-plot-panel" style="display:none;margin-top:24px;border-top:1px solid var(--border);padding-top:16px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
+          <span style="font-size:13px;font-weight:600;">Prediction Explorer
+            <button class="btn-help" onclick="toggleHelp('help-exploration')">?</button>
+          </span>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <label style="font-size:12px;color:var(--text-muted);">X axis:</label>
+            <select id="exploration-x-feature" onchange="renderExplorationPlots()" style="font-size:12px;padding:3px 6px;border:1px solid var(--border);border-radius:5px;">
+              <option value="__index__">Exploration sequence</option>
+            </select>
+            <button class="btn btn-secondary" onclick="clearExplorationHistory()" style="font-size:12px;padding:4px 10px;">Clear</button>
+            <button class="btn btn-secondary" id="download-exploration-btn" onclick="downloadExplorationHistory()" style="font-size:12px;padding:4px 10px;display:none;">⬇ Download History</button>
+          </div>
+        </div>
+        <div id="help-exploration" class="help-card" style="display:none;margin-bottom:10px;">
+          <p>Each prediction you run is plotted here so you can track how your design point compares to the training data envelope (blue band). Use this to explore the design space systematically — vary one input at a time and watch how the outputs change.</p>
+          <p>The ± bar on each dot is the model's uncertainty (±1σ). Taller bars = less confident prediction, usually far from your training data.</p>
+        </div>
+        <div id="exploration-charts"></div>
+        <p style="font-size:11px;color:var(--text-muted);margin-top:8px;">
+          Blue band = training data range · Dashed line = training mean · Blue dot = latest prediction · Grey dots = previous predictions · Vertical bars = model uncertainty (±1σ)
+        </p>
+      </div>
     </div>
 
     <div class="panel">
@@ -734,6 +823,7 @@ const appState = {
   trained: false,
   currentStep: 1,
   featureMedians: {},
+  explorationHistory: [],
 };
 
 // ---------------------------------------------------------------------------
@@ -828,6 +918,13 @@ async function handleFileUpload(file) {
 
   renderSummaryTable(data.summary);
   renderColumnCheckboxes(data.summary);
+
+  const qualMsg = getRowCountMessage(rows);
+  const qualEl = document.getElementById('upload-quality-msg');
+  qualEl.innerHTML = qualMsg.text;
+  qualEl.className = qualMsg.type === 'error' ? 'alert alert-error'
+    : qualMsg.type === 'warning' ? 'alert alert-warning' : 'alert alert-success';
+  qualEl.style.display = 'block';
 
   document.getElementById('summary-panel').style.display = 'block';
   document.getElementById('column-selection-panel').style.display = 'block';
@@ -957,6 +1054,11 @@ async function confirmColumns() {
   if (excCb) excCb.checked = false;
   document.getElementById('outlier-excluded-info').style.display = 'none';
   renderOutlierPanel(data.outlier_info);
+  renderDatasetHealthCard(data.n_rows, appState.featureCols.length);
+  document.getElementById('step2-row-count').textContent = data.n_rows;
+  document.getElementById('step2-feature-count').textContent = appState.featureCols.length;
+  document.getElementById('step2-dataset-summary').style.display = 'block';
+  applyModelRecommendation(data.n_rows, appState.featureCols.length);
 }
 
 // ---------------------------------------------------------------------------
@@ -1068,17 +1170,25 @@ function renderHistory(history, targetCols) {
 
 function renderResults(data) {
   const panel = document.getElementById('results-panel');
-  let html = '';
+  let html = renderModelHealth(data.results, data.target_cols);
 
   for (const target of data.target_cols) {
     const res = data.results[target];
+    const r2test  = res.metrics_test.r2;
+    const r2train = res.metrics_train.r2;
+    const gap = r2train - r2test;
+    const r2colour = r2test >= 0.90 ? 'var(--success)'
+                   : r2test >= 0.80 ? '#16a34a'
+                   : r2test >= 0.70 ? '#d97706' : 'var(--danger)';
+    const gapColour = gap > 0.15 ? 'var(--danger)' : 'var(--text-muted)';
+
     const cvHtml = res.cv_score !== null
-      ? `<p style="margin-top:8px;font-size:13px;">CV R² (mean): <strong style="color:var(--accent)">${res.cv_score.toFixed(4)}</strong></p>`
+      ? `<p style="margin-top:8px;font-size:13px;">Test reliability across data splits (k-fold CV) — mean fit quality (R²): <strong style="color:var(--accent)">${res.cv_score.toFixed(4)}</strong></p>`
       : '';
 
     const kernelHtml = res.optimized_kernel_str ? `
       <div class="kernel-info">
-        <strong>Optimized GPR Kernel</strong>
+        <strong>Optimized GPR Kernel (auto-fitted hyperparameters)</strong>
         <div class="kernel-str">${escHtml(res.optimized_kernel_str)}</div>
         ${renderLsTable(res.optimized_length_scales, data.feature_cols)}
       </div>` : '';
@@ -1095,7 +1205,6 @@ function renderResults(data) {
       `<option value="${escHtml(f)}">${escHtml(f)}</option>`
     ).join('');
 
-    // Reference point inputs pre-filled with training data medians
     const refInputsHtml = data.feature_cols.map(f => {
       const median = appState.featureMedians && appState.featureMedians[f] !== undefined
         ? Number(appState.featureMedians[f]).toPrecision(4) : '';
@@ -1110,18 +1219,27 @@ function renderResults(data) {
         <div class="metrics-section">
           <h5>Train Set</h5>
           <div class="metric-cards">
-            ${metricCard('RMSE', res.metrics_train.rmse)}
-            ${metricCard('R²', res.metrics_train.r2)}
-            ${metricCard('MAE', res.metrics_train.mae)}
+            ${metricCard('Typical error (RMSE)', res.metrics_train.rmse)}
+            ${metricCard('Fit quality (R²)', res.metrics_train.r2)}
+            ${metricCard('Average error (MAE)', res.metrics_train.mae)}
           </div>
         </div>
         <div class="metrics-section">
-          <h5>Test Set</h5>
+          <h5>Test Set (unseen runs) <button class="btn-help" onclick="toggleHelp('help-metrics-${escHtml(target)}')">?</button></h5>
           <div class="metric-cards">
-            ${metricCard('RMSE', res.metrics_test.rmse)}
-            ${metricCard('R²', res.metrics_test.r2)}
-            ${metricCard('MAE', res.metrics_test.mae)}
+            ${metricCard('Typical error (RMSE)', res.metrics_test.rmse)}
+            ${metricCard('Fit quality (R²)', res.metrics_test.r2, r2colour)}
+            ${metricCard('Average error (MAE)', res.metrics_test.mae)}
           </div>
+          <div id="help-metrics-${escHtml(target)}" class="help-card" style="display:none;margin-top:8px;">
+            <p><strong>Fit quality (R²):</strong> How well the model explains variation in your output. 1.0 = perfect. ≥0.90 = excellent for design optimisation. ≥0.80 = good for screening. Below 0.70 = unreliable for design decisions.</p>
+            <p><strong>Typical error (RMSE):</strong> Typical prediction error in the same units as your output. Compare to your output range to judge significance — 5% of the range is usually acceptable.</p>
+            <p><strong>Average error (MAE):</strong> Mean absolute prediction error. Less sensitive to large individual errors than RMSE. Both are in output units.</p>
+          </div>
+          <p style="font-size:12px;margin-top:8px;color:var(--text-muted);">
+            Train/test gap: <strong style="color:${gapColour}">${gap.toFixed(3)}</strong>
+            — ${gap > 0.15 ? '⚠ possible over-learning (overfitting)' : '✓ healthy generalisation'}
+          </p>
         </div>
       </div>
 
@@ -1131,19 +1249,48 @@ function renderResults(data) {
 
       <div class="plot-grid">
         <div class="plot-box">
-          <div class="plot-label">Parity Plot</div>
+          <div class="plot-label">
+            Parity Plot
+            <button class="btn-help" onclick="toggleHelp('help-plot-parity-${escHtml(target)}')">?</button>
+            <div style="font-size:11px;font-weight:400;color:var(--text-muted);margin-top:2px;">Points should cluster tightly along the diagonal — scatter = prediction error</div>
+          </div>
+          <div id="help-plot-parity-${escHtml(target)}" class="help-card" style="display:none;margin:8px;">
+            <p>Each dot is one test simulation run. X-axis = actual CFD output; Y-axis = surrogate prediction. A perfect model has all dots on the diagonal line. Vertical spread above/below shows where the model is least accurate — check if errors cluster in a specific part of your operating envelope.</p>
+          </div>
           <img src="data:image/png;base64,${res.parity_b64}" alt="Parity plot">
         </div>
         <div class="plot-box">
-          <div class="plot-label">Residuals</div>
+          <div class="plot-label">
+            Residuals
+            <button class="btn-help" onclick="toggleHelp('help-plot-residuals-${escHtml(target)}')">?</button>
+            <div style="font-size:11px;font-weight:400;color:var(--text-muted);margin-top:2px;">Random scatter around zero = good. Any pattern = the model is missing a trend</div>
+          </div>
+          <div id="help-plot-residuals-${escHtml(target)}" class="help-card" style="display:none;margin:8px;">
+            <p>Residual = actual output − predicted output. Random scatter around zero is good. A funnel shape means larger errors at higher output values. A curved pattern means a non-linear trend was missed — try GPR or Random Forest if you see this on a linear model.</p>
+          </div>
           <img src="data:image/png;base64,${res.residuals_b64}" alt="Residuals">
         </div>
         <div class="plot-box">
-          <div class="plot-label">Feature Importance</div>
+          <div class="plot-label">
+            Feature Influence (Importance)
+            <button class="btn-help" onclick="toggleHelp('help-plot-importance-${escHtml(target)}')">?</button>
+            <div style="font-size:11px;font-weight:400;color:var(--text-muted);margin-top:2px;">Longer bar = that input has more influence on the predicted output</div>
+          </div>
+          <div id="help-plot-importance-${escHtml(target)}" class="help-card" style="display:none;margin:8px;">
+            <p>Shows which design parameters drive the output most. <strong>Linear:</strong> size of fitted coefficient. <strong>GPR:</strong> how quickly predictions change with each input (1/length scale — per-feature relevance detection, ARD). <strong>Random Forest:</strong> how much each input reduces prediction error across 200 trees (feature influence score, MDI).</p>
+            <p>Use this to focus wind-tunnel or CFD resources on the most influential parameters, and to identify inputs that contribute little (candidates for removal to simplify your design space).</p>
+          </div>
           <img src="data:image/png;base64,${res.feat_importance_b64}" alt="Feature importance">
         </div>
         <div class="sensitivity-panel">
-          <h5>1D Sensitivity Plot</h5>
+          <h5>1D Sensitivity
+            <button class="btn-help" onclick="toggleHelp('help-plot-sens-${escHtml(target)}')">?</button>
+          </h5>
+          <div id="help-plot-sens-${escHtml(target)}" class="help-card" style="display:none;margin-bottom:8px;">
+            <p>One input is varied across its full training range; all other inputs are held at the reference point. Steeper slope = output is more sensitive to that input. Flat line = insensitive, safe to hold that parameter fixed.</p>
+            <p>The shaded band (GPR/RF) shows ±1 standard deviation of model uncertainty. Wider band = less confidence, usually where training data is sparse — consider adding more CFD runs in those regions.</p>
+          </div>
+          <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;">Steeper slope = output is more sensitive to this input. Flat = insensitive</div>
           <div class="sensitivity-controls">
             <label>Vary feature:</label>
             <select class="sensitivity-feature-select" data-target="${escHtml(target)}"
@@ -1163,7 +1310,14 @@ function renderResults(data) {
 
         ${data.feature_cols.length >= 2 ? `
         <div class="surface-panel">
-          <h5>2D Response Surface</h5>
+          <h5>2D Response Surface
+            <button class="btn-help" onclick="toggleHelp('help-plot-surface-${escHtml(target)}')">?</button>
+          </h5>
+          <div id="help-plot-surface-${escHtml(target)}" class="help-card" style="display:none;margin-bottom:8px;">
+            <p>Both selected inputs are varied on a 30×30 grid; all other inputs are held at their median values. Colour shows predicted output — find optimal regions and input interaction effects here (e.g. does CL peak at the same AoA for all Mach numbers?).</p>
+            <p>For GPR, the right panel shows uncertainty. Darker colour = less confidence, likely far from training data. Treat GPR predictions in dark uncertainty regions as estimates only — verify with a CFD run.</p>
+          </div>
+          <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;">Colour = predicted output value — find the optimum region and interaction effects between two inputs</div>
           <div class="surface-controls">
             <label>X axis:</label>
             <select class="surface-x-select" data-target="${escHtml(target)}" onchange="loadSurface('${escHtml(target)}')">
@@ -1189,7 +1343,14 @@ function renderResults(data) {
         </button>
         <span id="lc-loading-${escHtml(target)}" style="display:none;font-size:12px;color:var(--text-muted);margin-left:8px;">Computing…</span>
         <div class="plot-box" id="lc-box-${escHtml(target)}" style="display:none;margin-top:10px;">
-          <div class="plot-label">Learning Curve — training set size vs R²</div>
+          <div class="plot-label">
+            Learning Curve
+            <button class="btn-help" onclick="toggleHelp('help-plot-lc-${escHtml(target)}')">?</button>
+            <div id="lc-caption-${escHtml(target)}" style="font-size:11px;font-weight:400;color:var(--text-muted);margin-top:2px;font-style:italic;"></div>
+          </div>
+          <div id="help-plot-lc-${escHtml(target)}" class="help-card" style="display:none;margin:8px;">
+            <p>Blue = fit quality (R²) on training runs. Red = fit quality on new runs the model hasn't seen. If red is much lower than blue, the model has over-learned (overfitting) — try a shallower tree depth or add more varied CFD runs. If both are low, the model is too simple for your data (underfitting) — try GPR or Random Forest.</p>
+          </div>
           <img id="lc-plot-${escHtml(target)}" src="" alt="Learning curve" style="width:100%">
         </div>
       </div>
@@ -1200,10 +1361,11 @@ function renderResults(data) {
   panel.style.display = 'block';
 }
 
-function metricCard(label, value) {
+function metricCard(label, value, colour) {
+  const c = colour || 'var(--accent)';
   return `<div class="metric-card">
     <div class="metric-label">${label}</div>
-    <div class="metric-value">${typeof value === 'number' ? value.toFixed(4) : value}</div>
+    <div class="metric-value" style="color:${c}">${typeof value === 'number' ? value.toFixed(4) : value}</div>
   </div>`;
 }
 
@@ -1328,6 +1490,21 @@ function buildStep4() {
 
   // Batch hint
   document.getElementById('batch-feature-hint').textContent = appState.featureCols.join(', ');
+
+  // Populate exploration X-axis feature select
+  const xSel = document.getElementById('exploration-x-feature');
+  if (xSel) {
+    xSel.innerHTML = '<option value="__index__">Exploration sequence</option>';
+    for (const col of appState.featureCols) {
+      const opt = document.createElement('option');
+      opt.value = col;
+      opt.textContent = col;
+      xSel.appendChild(opt);
+    }
+  }
+
+  // Re-render exploration plots if history exists
+  if (appState.explorationHistory.length > 0) renderExplorationPlots();
 }
 
 // Hook step4 setup on navigation
@@ -1335,6 +1512,14 @@ const origGoToStep = goToStep;
 window.goToStep = function(n) {
   origGoToStep(n);
   if (n === 4 && appState.trained) buildStep4();
+  if (n === 2 && appState.summary && appState.featureCols.length > 0) {
+    const nRows = appState.summary.shape[0];
+    const nFeatures = appState.featureCols.length;
+    document.getElementById('step2-row-count').textContent = nRows;
+    document.getElementById('step2-feature-count').textContent = nFeatures;
+    document.getElementById('step2-dataset-summary').style.display = 'block';
+    applyModelRecommendation(nRows, nFeatures);
+  }
 };
 
 function showExtrapWarnings(warnings, elId) {
@@ -1379,16 +1564,32 @@ async function predictSingle() {
   showExtrapWarnings(data.extrapolation_warnings, 'extrap-warning');
 
   const pred = data.predictions[0];
+  const targetKeys = appState.targetCols;
+
+  // Build result table with confidence badges
   let tableHtml = '<table class="result-table"><thead><tr>';
-  const keys = Object.keys(pred).filter(k => !appState.featureCols.includes(k));
-  for (const k of keys) tableHtml += `<th>${escHtml(k)}</th>`;
+  for (const k of targetKeys) tableHtml += `<th>${escHtml(k)}</th>`;
   tableHtml += '</tr></thead><tbody><tr>';
-  for (const k of keys) tableHtml += `<td>${typeof pred[k] === 'number' ? pred[k].toPrecision(6) : pred[k]}</td>`;
+  for (const k of targetKeys) {
+    const val = pred[k];
+    const std = pred[`${k}_std`];
+    tableHtml += `<td style="white-space:nowrap;">${typeof val === 'number' ? val.toPrecision(6) : val}${confidenceBadge(val, std)}</td>`;
+  }
   tableHtml += '</tr></tbody></table>';
+  if (appState.modelType !== 'gpr' && appState.modelType !== 'rf') {
+    tableHtml += '<p style="font-size:11px;color:var(--text-muted);margin-top:6px;">Uncertainty estimates available for GPR and Random Forest models.</p>';
+  }
 
   const resultDiv = document.getElementById('single-result');
   resultDiv.innerHTML = tableHtml;
   resultDiv.style.display = 'block';
+
+  // Add to exploration history (max 20)
+  const histEntry = { inputs: { ...inputs }, predictions: {} };
+  for (const k of Object.keys(pred)) histEntry.predictions[k] = pred[k];
+  if (appState.explorationHistory.length >= 20) appState.explorationHistory.shift();
+  appState.explorationHistory.push(histEntry);
+  renderExplorationPlots();
 }
 
 async function predictBatch() {
@@ -1437,6 +1638,8 @@ async function loadLearningCurve(target) {
     if (loadingEl) loadingEl.style.display = 'none';
     if (!res.ok) { alert(data.error || 'Failed to generate learning curve.'); return; }
     imgEl.src = 'data:image/png;base64,' + data.plot_b64;
+    const captionEl = document.getElementById(`lc-caption-${target}`);
+    if (captionEl) captionEl.textContent = learningCurveCaption(data);
     boxEl.style.display = 'block';
   } catch (e) {
     if (loadingEl) loadingEl.style.display = 'none';
@@ -1547,6 +1750,277 @@ function escHtml(str) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+// ---------------------------------------------------------------------------
+// Help card toggle
+// ---------------------------------------------------------------------------
+function toggleHelp(id) {
+  const el = document.getElementById(id);
+  if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+// ---------------------------------------------------------------------------
+// Upload quality message
+// ---------------------------------------------------------------------------
+function getRowCountMessage(nRows) {
+  if (nRows < 20) return {
+    type: 'error',
+    text: `⚠ Only ${nRows} simulation runs detected — surrogates need at least 30 runs to be reliable. Consider adding more CFD data before training.`
+  };
+  if (nRows < 30) return {
+    type: 'warning',
+    text: `${nRows} simulation runs detected — results may be unreliable below 30 runs. More data recommended.`
+  };
+  return {
+    type: 'success',
+    text: `✓ ${nRows} simulation runs detected — good dataset size for surrogate modeling.`
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Dataset health card (Step 1, after column confirmation)
+// ---------------------------------------------------------------------------
+function renderDatasetHealthCard(nRows, nFeatures) {
+  const card = document.getElementById('dataset-health-card');
+  if (!card) return;
+  const ratio = nRows / Math.max(nFeatures, 1);
+  let msg, cls;
+  if (ratio < 5) {
+    cls = 'alert-warning';
+    msg = `⚠ ${nFeatures} input features for ${nRows} runs — low ratio (${ratio.toFixed(1)}:1). Aim for at least 10 runs per feature. Consider removing less important inputs or adding more CFD runs.`;
+  } else if (ratio < 10) {
+    cls = 'alert-warning';
+    msg = `${nFeatures} features, ${nRows} runs — acceptable ratio (${ratio.toFixed(1)}:1). More runs would improve accuracy (target 10:1+).`;
+  } else {
+    cls = 'alert-success';
+    msg = `✓ ${nFeatures} features, ${nRows} runs — healthy ratio (${ratio.toFixed(1)}:1) for surrogate modeling.`;
+  }
+  card.innerHTML = `<div class="alert ${cls}" style="margin-top:0;">${msg}</div>`;
+  card.style.display = 'block';
+}
+
+// ---------------------------------------------------------------------------
+// Model auto-recommendation (Step 2)
+// ---------------------------------------------------------------------------
+function recommendModel(nRows, nFeatures) {
+  if (nRows < 20)
+    return { model: 'linear',
+             name: 'Linear Regression',
+             reason: `Only ${nRows} runs — too few for Gaussian Process Regression (GPR) to optimise reliably. Linear Regression is selected as a fast baseline. Add more CFD runs for a better surrogate.` };
+  if (nRows <= 500 && nFeatures <= nRows / 5)
+    return { model: 'gpr',
+             name: 'Gaussian Process Regression (GPR)',
+             reason: `${nRows} runs, ${nFeatures} features — small dataset. GPR is most accurate on small, clean datasets and provides a confidence estimate (±σ) for every prediction.` };
+  if (nRows <= 500 && nFeatures > nRows / 5)
+    return { model: 'rf',
+             name: 'Random Forest',
+             reason: `${nFeatures} features for ${nRows} runs is a high input-to-run ratio. Random Forest handles many inputs better than GPR at this data size.` };
+  if (nRows > 2000)
+    return { model: 'rf',
+             name: 'Random Forest',
+             reason: `${nRows} runs — large dataset. GPR processing time grows very rapidly with data size. Random Forest gives good accuracy and trains in seconds.` };
+  return { model: 'rf',
+           name: 'Random Forest',
+           reason: `${nRows} runs — medium dataset. Random Forest balances accuracy and training speed well at this size.` };
+}
+
+function applyModelRecommendation(nRows, nFeatures) {
+  const rec = recommendModel(nRows, nFeatures);
+  const banner = document.getElementById('model-recommendation-banner');
+  const nameEl = document.getElementById('rec-model-name');
+  const reasonEl = document.getElementById('rec-reason');
+  const sel = document.getElementById('model-type');
+  if (!banner || !nameEl || !reasonEl || !sel) return;
+  nameEl.textContent = rec.name;
+  reasonEl.textContent = rec.reason;
+  banner.style.display = 'block';
+  sel.value = rec.model;
+  onModelTypeChange();
+}
+
+// ---------------------------------------------------------------------------
+// Model health banner (Step 3)
+// ---------------------------------------------------------------------------
+function renderModelHealth(results, targetCols) {
+  let minTestR2 = Infinity, maxGap = 0;
+  for (const t of targetCols) {
+    const r2test  = results[t].metrics_test.r2;
+    const r2train = results[t].metrics_train.r2;
+    minTestR2 = Math.min(minTestR2, r2test);
+    maxGap    = Math.max(maxGap, r2train - r2test);
+  }
+  let verdict, alertClass, nextSteps = '';
+  if (maxGap > 0.15) {
+    alertClass = 'alert-warning';
+    verdict = `The model performs much better on its training runs than on new ones — it has over-learned the specific points it saw (overfitting). Train/test gap: ${maxGap.toFixed(3)}.`;
+    nextSteps = 'Try: reduce Max Tree Depth (RF) · enable cross-validation · add more varied CFD runs across the design space.';
+  } else if (minTestR2 >= 0.90) {
+    alertClass = 'alert-success';
+    verdict = 'Excellent fit — suitable for design optimisation and detailed sensitivity analysis.';
+  } else if (minTestR2 >= 0.80) {
+    alertClass = 'alert-success';
+    verdict = 'Good fit — suitable for design screening and sensitivity analysis.';
+  } else if (minTestR2 >= 0.70) {
+    alertClass = 'alert-warning';
+    verdict = `Acceptable fit — use for qualitative trends, not precise design targets. Verify critical predictions with a CFD run. Lowest test fit quality (R²): ${minTestR2.toFixed(3)}.`;
+    nextSteps = 'To improve: try Random Forest · add more varied CFD runs · check Step 1 for outliers.';
+  } else {
+    alertClass = 'alert-error';
+    verdict = `Poor fit — predictions are unreliable for design decisions. Do not use for design optimisation. Test fit quality (R²): ${minTestR2.toFixed(3)}.`;
+    nextSteps = 'Try: switch model type · add significantly more CFD runs · review column selection for irrelevant inputs.';
+  }
+  return `<div class="alert ${alertClass}" style="margin-bottom:16px;">
+    <strong>Model Health:</strong> ${verdict}
+    ${nextSteps ? `<div style="margin-top:6px;font-size:12px;">${nextSteps}</div>` : ''}
+  </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Prediction confidence badge
+// ---------------------------------------------------------------------------
+function confidenceBadge(value, std) {
+  if (std === undefined || std === null) return '';
+  const relErr = Math.abs(std / (value || 1)) * 100;
+  if (relErr < 2)
+    return `<span class="conf-badge conf-high">High confidence ±${std.toPrecision(3)}</span>`;
+  if (relErr < 5)
+    return `<span class="conf-badge conf-med">Moderate confidence ±${std.toPrecision(3)}</span>`;
+  return `<span class="conf-badge conf-low">⚠ Low confidence ±${std.toPrecision(3)} — verify with CFD</span>`;
+}
+
+// ---------------------------------------------------------------------------
+// Dynamic learning curve caption
+// ---------------------------------------------------------------------------
+function learningCurveCaption(d) {
+  if (!d || d.final_train_r2 === undefined) return '';
+  const gap = d.final_train_r2 - d.final_val_r2;
+  if (d.final_train_r2 < 0.70 && d.final_val_r2 < 0.70)
+    return '⚠ Both train and test scores are low — the model is too simple for your data (underfitting). Try GPR or Random Forest.';
+  if (gap > 0.15)
+    return `⚠ The model performs well on training runs but poorly on new ones — it has over-learned the specific points it saw (overfitting). Try a smoother model setting or add more varied data.`;
+  if (d.val_still_rising)
+    return '📈 Fit quality is still improving at your full dataset size — more CFD runs would improve this model further.';
+  return '✓ Adding more data is unlikely to help further — the curve has flattened. Consider switching model type if accuracy is insufficient.';
+}
+
+// ---------------------------------------------------------------------------
+// Exploration history plots
+// ---------------------------------------------------------------------------
+function renderExplorationPlots() {
+  const panel = document.getElementById('exploration-plot-panel');
+  if (!panel) return;
+  const history = appState.explorationHistory;
+  if (history.length === 0) {
+    panel.style.display = 'none';
+    const dlBtn = document.getElementById('download-exploration-btn');
+    if (dlBtn) dlBtn.style.display = 'none';
+    return;
+  }
+  panel.style.display = 'block';
+  const dlBtn = document.getElementById('download-exploration-btn');
+  if (dlBtn) dlBtn.style.display = 'inline-flex';
+
+  const xFeature = (document.getElementById('exploration-x-feature') || {}).value || '__index__';
+  const chartsContainer = document.getElementById('exploration-charts');
+  if (!chartsContainer) return;
+  chartsContainer.innerHTML = '';
+
+  const W = 480, H = 180, PAD = { top: 12, right: 16, bottom: 28, left: 52 };
+  const plotW = W - PAD.left - PAD.right;
+  const plotH = H - PAD.top - PAD.bottom;
+
+  for (const target of appState.targetCols) {
+    const trainStats = appState.summary && appState.summary.stats[target];
+
+    const entries = history.map((e, i) => ({
+      x: xFeature === '__index__' ? i : (e.inputs[xFeature] !== undefined ? Number(e.inputs[xFeature]) : i),
+      y: e.predictions[target],
+      std: e.predictions[`${target}_std`],
+      isCurrent: i === history.length - 1,
+    })).filter(e => e.y !== undefined && e.y !== null);
+
+    if (entries.length === 0) continue;
+
+    const allY = entries.flatMap(e => e.std ? [e.y - e.std, e.y + e.std] : [e.y]);
+    const trainMin = trainStats ? trainStats.min : Math.min(...allY);
+    const trainMax = trainStats ? trainStats.max : Math.max(...allY);
+    const trainMean = trainStats ? trainStats.mean : (trainMin + trainMax) / 2;
+    const yMin = Math.min(trainMin, ...allY);
+    const yMax = Math.max(trainMax, ...allY);
+    const yRange = yMax - yMin || 1;
+
+    const allX = entries.map(e => e.x);
+    const xMin = Math.min(...allX), xMax = Math.max(...allX);
+    const xRange = xMax - xMin || 1;
+
+    const sx = x => PAD.left + ((x - xMin) / xRange) * plotW;
+    const sy = y => PAD.top + (1 - (y - yMin) / yRange) * plotH;
+
+    const bandTop = sy(trainMax), bandBot = sy(trainMin), bandH = Math.max(1, bandBot - bandTop);
+    const meanY = sy(trainMean);
+
+    let svg = `
+      <rect x="${PAD.left}" y="${bandTop.toFixed(1)}" width="${plotW}" height="${bandH.toFixed(1)}" fill="#dbeafe" opacity="0.55"/>
+      <line x1="${PAD.left}" y1="${meanY.toFixed(1)}" x2="${PAD.left + plotW}" y2="${meanY.toFixed(1)}" stroke="#93c5fd" stroke-width="1.5" stroke-dasharray="5,3"/>
+      <line x1="${PAD.left}" y1="${PAD.top}" x2="${PAD.left}" y2="${PAD.top + plotH}" stroke="#cbd5e1" stroke-width="1"/>
+      <line x1="${PAD.left}" y1="${PAD.top + plotH}" x2="${PAD.left + plotW}" y2="${PAD.top + plotH}" stroke="#cbd5e1" stroke-width="1"/>`;
+
+    // Y-axis ticks
+    for (let i = 0; i <= 2; i++) {
+      const yVal = yMin + yRange * i / 2;
+      const yPx = sy(yVal);
+      svg += `<line x1="${PAD.left - 4}" y1="${yPx.toFixed(1)}" x2="${PAD.left}" y2="${yPx.toFixed(1)}" stroke="#94a3b8" stroke-width="1"/>
+        <text x="${PAD.left - 6}" y="${(yPx + 3.5).toFixed(1)}" text-anchor="end" font-size="9" fill="#64748b">${yVal.toPrecision(3)}</text>`;
+    }
+
+    // Data points
+    for (const e of entries) {
+      const cx = sx(e.x), cy = sy(e.y);
+      const col = e.isCurrent ? '#2563eb' : '#94a3b8';
+      const r = e.isCurrent ? 5 : 4;
+      if (e.std !== undefined && e.std !== null) {
+        const eTop = sy(e.y + e.std), eBot = sy(e.y - e.std);
+        svg += `<line x1="${cx.toFixed(1)}" y1="${eTop.toFixed(1)}" x2="${cx.toFixed(1)}" y2="${eBot.toFixed(1)}" stroke="${col}" stroke-width="1.5" opacity="0.7"/>
+          <line x1="${(cx - 3).toFixed(1)}" y1="${eTop.toFixed(1)}" x2="${(cx + 3).toFixed(1)}" y2="${eTop.toFixed(1)}" stroke="${col}" stroke-width="1.5" opacity="0.7"/>
+          <line x1="${(cx - 3).toFixed(1)}" y1="${eBot.toFixed(1)}" x2="${(cx + 3).toFixed(1)}" y2="${eBot.toFixed(1)}" stroke="${col}" stroke-width="1.5" opacity="0.7"/>`;
+      }
+      svg += `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${r}" fill="${col}" opacity="${e.isCurrent ? 1 : 0.65}"/>`;
+    }
+
+    const xLabel = xFeature === '__index__' ? 'Exploration order' : xFeature;
+    svg += `<text x="${(PAD.left + plotW / 2).toFixed(1)}" y="${H - 4}" text-anchor="middle" font-size="9" fill="#64748b">${escHtml(xLabel)}</text>
+      <text x="12" y="${(PAD.top + plotH / 2).toFixed(1)}" text-anchor="middle" font-size="9" fill="#64748b" transform="rotate(-90 12 ${(PAD.top + plotH / 2).toFixed(1)})">${escHtml(target)}</text>`;
+
+    chartsContainer.insertAdjacentHTML('beforeend',
+      `<div class="exploration-chart">
+        <div class="exploration-chart-title">${escHtml(target)} — your predictions vs training envelope</div>
+        <svg width="100%" viewBox="0 0 ${W} ${H}" style="max-width:520px;display:block;margin:0 auto 4px;">${svg}</svg>
+      </div>`);
+  }
+}
+
+function clearExplorationHistory() {
+  appState.explorationHistory = [];
+  renderExplorationPlots();
+}
+
+function downloadExplorationHistory() {
+  const history = appState.explorationHistory;
+  if (history.length === 0) return;
+  const features = appState.featureCols;
+  const targets = appState.targetCols;
+  const stdCols = targets.flatMap(t => [t, `${t}_std`]);
+  const header = [...features, ...stdCols].join(',');
+  const rows = history.map(e =>
+    [...features.map(f => e.inputs[f] !== undefined ? e.inputs[f] : ''),
+     ...stdCols.map(c => e.predictions[c] !== undefined ? e.predictions[c] : '')].join(',')
+  );
+  const blob = new Blob([[header, ...rows].join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'exploration_history.csv';
+  a.click();
 }
 </script>
 </body>

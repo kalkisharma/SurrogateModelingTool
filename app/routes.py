@@ -571,4 +571,10 @@ def learning_curve_route():
         return jsonify({'error': f'Learning curve failed: {exc}'}), 500
 
     plot_b64 = ml_engine.get_learning_curve_plot_b64(train_sizes, train_scores, val_scores, target)
-    return jsonify({'plot_b64': plot_b64, 'target': target})
+    return jsonify({
+        'plot_b64': plot_b64,
+        'target': target,
+        'final_train_r2': float(train_scores[-1].mean()),
+        'final_val_r2': float(val_scores[-1].mean()),
+        'val_still_rising': bool(val_scores[-1].mean() > val_scores[-2].mean()),
+    })
