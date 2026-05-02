@@ -32,6 +32,8 @@ def _reset_downstream(state, level='upload'):
         state.update({
             'trained': False, 'gpr_warning': None,
             'results': {}, 'last_predictions': None,
+            'de_corr_b64': None, 'de_corr_pairs': None,
+            'de_ft_b64': None, 'de_nonlinear_cols': None,
         })
 
 
@@ -601,6 +603,14 @@ def data_explorer():
     if state['df_clean'] is None or not state['feature_cols']:
         return jsonify({'error': 'No data. Complete Step 1 first.'}), 400
 
+    if state.get('de_corr_b64') is not None:
+        return jsonify({
+            'corr_heatmap_b64': state['de_corr_b64'],
+            'feat_target_grid_b64': state['de_ft_b64'],
+            'high_corr_pairs': state['de_corr_pairs'],
+            'nonlinear_hint_cols': state['de_nonlinear_cols'],
+        })
+
     df_clean = state['df_clean']
     feature_cols = state['feature_cols']
     target_cols = state['target_cols']
@@ -611,6 +621,11 @@ def data_explorer():
     feat_target_b64, nonlinear_hint_cols = data_utils.get_feat_target_grid_b64(
         df_clean, feature_cols, target_cols
     )
+
+    state['de_corr_b64'] = heatmap_b64
+    state['de_corr_pairs'] = high_corr_pairs
+    state['de_ft_b64'] = feat_target_b64
+    state['de_nonlinear_cols'] = nonlinear_hint_cols
 
     return jsonify({
         'corr_heatmap_b64': heatmap_b64,

@@ -268,7 +268,7 @@ def get_feat_target_grid_b64(df, feature_cols, target_cols, max_feat_cols=3):
             ax.tick_params(labelsize=7)
 
     fig.suptitle('What Your Model Will Learn  (red line = linear trend)',
-                 fontsize=10, y=1.01)
+                 fontsize=10, y=0.98)
     fig.patch.set_facecolor('white')
     plt.tight_layout()
 
@@ -295,9 +295,14 @@ def get_unusual_runs_b64(df, feature_cols, top_n=10):
     if len(cols) < 2 or len(df) < 8:
         return '', []
 
-    X = df[cols].fillna(df[cols].mean()).values
+    df_vals = df[cols].dropna()
+    if len(df_vals) < 8:
+        return '', []
+    X = df_vals.values
+    original_idx = df_vals.index.tolist()
 
-    clf = IsolationForest(contamination='auto', random_state=42, n_estimators=100)
+    contamination = max(0.05, min(0.1, 5 / len(df_vals)))
+    clf = IsolationForest(contamination=contamination, random_state=42, n_estimators=100)
     clf.fit(X)
     raw_scores = clf.score_samples(X)
     s_min, s_max = raw_scores.min(), raw_scores.max()
@@ -306,7 +311,7 @@ def get_unusual_runs_b64(df, feature_cols, top_n=10):
     else:
         normalized = 1.0 - (raw_scores - s_min) / (s_max - s_min)
 
-    n_show = min(top_n, len(df))
+    n_show = min(top_n, len(df_vals))
     idx_sorted = np.argsort(normalized)[-n_show:]
     scores_sorted = normalized[idx_sorted]
     order = np.argsort(scores_sorted)
@@ -323,7 +328,7 @@ def get_unusual_runs_b64(df, feature_cols, top_n=10):
         ax.plot(s, y, 'o', color=col, markersize=7, zorder=5)
 
     ax.set_yticks(y_pos)
-    ax.set_yticklabels([f'Row {int(show_idx[i])}' for i in range(n_show)], fontsize=9)
+    ax.set_yticklabels([f'Row {original_idx[int(show_idx[i])]}' for i in range(n_show)], fontsize=9)
     ax.set_xlabel('Unusualness score  (0 = typical · 1 = most unusual)', fontsize=9)
     ax.set_title('Unusual Run Detector', fontsize=10, pad=8)
     ax.axvline(x=0.6, color='#dc2626', lw=1.2, linestyle='--', alpha=0.7)
@@ -341,7 +346,7 @@ def get_unusual_runs_b64(df, feature_cols, top_n=10):
     plot_b64 = base64.b64encode(buf.read()).decode('utf-8')
 
     top_runs = [
-        {'row_idx': int(show_idx[i]), 'score': round(float(show_scores[i]), 3)}
+        {'row_idx': original_idx[int(show_idx[i])], 'score': round(float(show_scores[i]), 3)}
         for i in range(n_show - 1, -1, -1)
     ]
 

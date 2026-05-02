@@ -557,7 +557,17 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
     </div>
 
     <div class="panel" id="summary-panel" style="display:none">
-      <div class="panel-title">Data Summary</div>
+      <div class="panel-title">Data Summary <button class="btn-help" onclick="toggleHelp('help-summary-table')">?</button></div>
+      <div id="help-summary-table" class="help-card" style="display:none;margin-bottom:12px;">
+        <p><strong>Distribution</strong> — shape of the data in that column:
+          <span class="skew-badge skew-r2">▶▶</span> strong right skew (few very high values) ·
+          <span class="skew-badge skew-r1">▶</span> mild right skew ·
+          <span class="skew-badge skew-sym">●</span> roughly symmetric ·
+          <span class="skew-badge skew-l1">◀</span> mild left skew ·
+          <span class="skew-badge skew-l2">◀◀</span> strong left skew.
+          Drag (C<sub>D</sub>) at high angles of attack is typically right-skewed — this is normal physics. Strongly skewed <em>targets</em> can reduce model accuracy in the tail region.</p>
+        <p><strong>Coverage</strong> — flags input features where the values barely change across your runs (coefficient of variation &lt; 1%). A column that barely varies gives the model almost no information about how it affects the output. Consider removing it from the feature list unless it is physically significant.</p>
+      </div>
       <div id="summary-table-wrapper"></div>
     </div>
 
@@ -617,73 +627,73 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
       </div>
 
       <div id="dataset-health-card" style="display:none;margin-top:12px;"></div>
-
-      <details id="data-explorer-section" style="display:none;margin-top:16px;">
-        <summary style="font-size:13px;font-weight:600;cursor:pointer;color:var(--accent);list-style:none;display:flex;align-items:center;gap:8px;padding:4px 0;">
-          <span>&#9658;</span> Explore Data Relationships — correlations, linearity &amp; unusual runs
-        </summary>
-        <div style="padding-top:14px;">
-          <div id="de-loading" class="alert alert-info" style="display:none;font-size:12px;">Analysing dataset…</div>
-          <div id="de-error" class="alert alert-error" style="display:none;font-size:12px;"></div>
-
-          <!-- F1: Correlation heatmap -->
-          <div style="margin-bottom:18px;">
-            <div style="font-size:12px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:6px;">
-              Input Correlations
-              <button class="btn-help" onclick="toggleHelp('help-de-corr')">?</button>
-            </div>
-            <div id="help-de-corr" class="help-card" style="display:none;margin-bottom:8px;">
-              <p><strong>What this shows:</strong> How strongly each pair of input features is correlated (Pearson r, −1 to +1). Red = strong positive correlation, blue = strong negative. 0 = no straight-line relationship (could still be nonlinear — check the scatter plots below).</p>
-              <p><strong>Why it matters:</strong> Redundant inputs make the model harder to interpret. Consider removing one — but only if both are not independently meaningful for the physics.</p>
-            </div>
-            <div id="de-corr-msg" style="display:none;margin-bottom:8px;"></div>
-            <img id="de-corr-img" src="" alt="Correlation heatmap" style="display:none;max-width:100%;border-radius:8px;">
-          </div>
-
-          <!-- F2: Feature-target scatter -->
-          <div style="margin-bottom:18px;">
-            <div style="font-size:12px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:6px;">
-              What Your Model Will Learn
-              <button class="btn-help" onclick="toggleHelp('help-de-ft')">?</button>
-            </div>
-            <div id="help-de-ft" class="help-card" style="display:none;margin-bottom:8px;">
-              <p><strong>What this shows:</strong> Each input plotted against each output with a linear trend line (red). Points that follow the line closely → Linear Regression will handle this well. Points that curve away from the line → the relationship is non-linear, and GPR or Random Forest will perform better.</p>
-              <p><strong>Wide scatter:</strong> Scatter around the line means noisy or complex data in that region. More CFD runs there would improve model accuracy.</p>
-            </div>
-            <div id="de-ft-msg" style="display:none;margin-bottom:8px;"></div>
-            <img id="de-ft-img" src="" alt="Feature-target scatter" style="display:none;max-width:100%;border-radius:8px;">
-          </div>
-
-          <!-- F4: Unusual run detector -->
-          <div style="margin-bottom:8px;">
-            <div style="font-size:12px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:6px;">
-              Unusual Run Detector
-              <button class="btn-help" onclick="toggleHelp('help-de-ur')">?</button>
-            </div>
-            <div id="help-de-ur" class="help-card" style="display:none;margin-bottom:8px;">
-              <p><strong>What this shows:</strong> Simulation runs that are unusual as a <em>combination</em> of inputs, not just extreme in one column. A run can look normal in every individual input but still be an unusual combination (e.g. high Mach at very low AoA when all other high-Mach runs are at moderate AoA).</p>
-              <p><strong>Score:</strong> 0 = very typical. 1 = most unusual. Red dots (score &gt; 0.6) are worth reviewing for possible setup errors or unexpected operating conditions.</p>
-              <p><strong>Structured grid note:</strong> In a full-factorial sweep, boundary and corner points are expected to score higher. The Design type selector shows the relevant caveat.</p>
-            </div>
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
-              <label for="doe-type-select" style="font-size:12px;color:var(--text-muted);">Design type:</label>
-              <select id="doe-type-select" style="font-size:12px;padding:3px 8px;">
-                <option value="grid" selected>Structured grid (default — leave as is if unsure)</option>
-                <option value="lhs">Latin Hypercube / space-filling</option>
-                <option value="random">Random / unknown</option>
-              </select>
-              <button class="btn btn-secondary" onclick="runUnusualDetector()" style="font-size:12px;padding:5px 12px;">Run Detector</button>
-            </div>
-            <div id="de-ur-caveat" style="display:none;margin-bottom:8px;"></div>
-            <div id="de-ur-loading" style="display:none;font-size:12px;color:var(--text-muted);margin-bottom:6px;">Running analysis…</div>
-            <img id="de-ur-img" src="" alt="Unusual run detector" style="display:none;max-width:100%;border-radius:8px;">
-            <div id="de-ur-top" style="display:none;margin-top:8px;"></div>
-          </div>
-
-          <div id="de-prospective" style="display:none;margin-top:14px;"></div>
-        </div>
-      </details>
     </div>
+
+    <details id="data-explorer-section" class="panel" style="display:none;padding-top:12px;margin-top:0;">
+      <summary style="font-size:13px;font-weight:600;cursor:pointer;color:var(--accent);list-style:none;display:flex;align-items:center;gap:8px;padding:4px 0;">
+        <span>&#9658;</span> Explore Data Relationships — correlations, linearity &amp; unusual runs
+      </summary>
+      <div style="padding-top:14px;">
+        <div id="de-loading" class="alert alert-info" style="display:none;font-size:12px;">Analysing dataset…</div>
+        <div id="de-error" class="alert alert-error" style="display:none;font-size:12px;"></div>
+
+        <!-- F1: Correlation heatmap -->
+        <div style="margin-bottom:18px;">
+          <div style="font-size:12px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:6px;">
+            Input Correlations
+            <button class="btn-help" onclick="toggleHelp('help-de-corr')">?</button>
+          </div>
+          <div id="help-de-corr" class="help-card" style="display:none;margin-bottom:8px;">
+            <p><strong>What this shows:</strong> How strongly each pair of input features is correlated (Pearson r, −1 to +1). Red = strong positive correlation, blue = strong negative. 0 = no straight-line relationship (could still be nonlinear — check the scatter plots below).</p>
+            <p><strong>Why it matters:</strong> Redundant inputs make the model harder to interpret. Consider removing one — but only if both are not independently meaningful for the physics.</p>
+          </div>
+          <div id="de-corr-msg" style="display:none;margin-bottom:8px;"></div>
+          <img id="de-corr-img" src="" alt="Correlation heatmap" style="display:none;max-width:100%;border-radius:8px;">
+        </div>
+
+        <!-- F2: Feature-target scatter -->
+        <div style="margin-bottom:18px;">
+          <div style="font-size:12px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:6px;">
+            What Your Model Will Learn
+            <button class="btn-help" onclick="toggleHelp('help-de-ft')">?</button>
+          </div>
+          <div id="help-de-ft" class="help-card" style="display:none;margin-bottom:8px;">
+            <p><strong>What this shows:</strong> Each input plotted against each output with a linear trend line (red). Points that follow the line closely → Linear Regression will handle this well. Points that curve away from the line → the relationship is non-linear, and GPR or Random Forest will perform better.</p>
+            <p><strong>Wide scatter:</strong> Scatter around the line means noisy or complex data in that region. More CFD runs there would improve model accuracy.</p>
+          </div>
+          <div id="de-ft-msg" style="display:none;margin-bottom:8px;"></div>
+          <img id="de-ft-img" src="" alt="Feature-target scatter" style="display:none;max-width:100%;border-radius:8px;">
+        </div>
+
+        <!-- F4: Unusual run detector -->
+        <div style="margin-bottom:8px;">
+          <div style="font-size:12px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:6px;">
+            Unusual Run Detector
+            <button class="btn-help" onclick="toggleHelp('help-de-ur')">?</button>
+          </div>
+          <div id="help-de-ur" class="help-card" style="display:none;margin-bottom:8px;">
+            <p><strong>What this shows:</strong> Simulation runs that are unusual as a <em>combination</em> of inputs, not just extreme in one column. A run can look normal in every individual input but still be an unusual combination (e.g. high Mach at very low AoA when all other high-Mach runs are at moderate AoA).</p>
+            <p><strong>Score:</strong> 0 = very typical. 1 = most unusual. Red dots (score &gt; 0.6) are worth reviewing for possible setup errors or unexpected operating conditions.</p>
+            <p><strong>Structured grid note:</strong> In a full-factorial sweep, boundary and corner points are expected to score higher. The Design type selector shows the relevant caveat.</p>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
+            <label for="doe-type-select" style="font-size:12px;color:var(--text-muted);">Design type:</label>
+            <select id="doe-type-select" style="font-size:12px;padding:3px 8px;">
+              <option value="grid" selected>Structured grid (default — leave as is if unsure)</option>
+              <option value="lhs">Latin Hypercube / space-filling</option>
+              <option value="random">Random / unknown</option>
+            </select>
+            <button class="btn btn-secondary" onclick="runUnusualDetector()" style="font-size:12px;padding:5px 12px;">Run Detector</button>
+          </div>
+          <div id="de-ur-caveat" style="display:none;margin-bottom:8px;"></div>
+          <div id="de-ur-loading" style="display:none;font-size:12px;color:var(--text-muted);margin-bottom:6px;">Running analysis…</div>
+          <img id="de-ur-img" src="" alt="Unusual run detector" style="display:none;max-width:100%;border-radius:8px;">
+          <div id="de-ur-top" style="display:none;margin-top:8px;"></div>
+        </div>
+
+        <div id="de-prospective" style="display:none;margin-top:14px;"></div>
+      </div>
+    </details>
 
     <div class="nav-row">
       <span></span>
@@ -2130,7 +2140,7 @@ async function loadDataExplorer() {
     const pairs = data.high_corr_pairs.map(p =>
       `<strong>${escHtml(p.col_a)}</strong> ↔ <strong>${escHtml(p.col_b)}</strong> (r = ${p.r})`
     ).join(' · ');
-    corrMsg.innerHTML = `<div class="alert alert-warning" style="margin:0;font-size:12px;">⚠ High correlation: ${pairs}. Consider removing one — but only if both are not independently physically meaningful.</div>`;
+    corrMsg.innerHTML = `<div class="alert alert-warning" style="margin:0;font-size:12px;">⚠ High correlation: ${pairs}. Redundant inputs can destabilise model coefficients. Remove one if both measure the same underlying physics. <button class="btn btn-secondary" onclick="goToStep(1)" style="font-size:11px;padding:2px 8px;margin-left:4px;">← Uncheck a column</button></div>`;
     corrMsg.style.display = 'block';
     // Bridge to step1Flags
     for (const p of data.high_corr_pairs) {
@@ -2155,7 +2165,7 @@ async function loadDataExplorer() {
   if (data.nonlinear_hint_cols && data.nonlinear_hint_cols.length > 0 && ftMsg) {
     appState.nonlinearFeatures = data.nonlinear_hint_cols;
     const colNames = data.nonlinear_hint_cols.map(c => `<strong>${escHtml(c)}</strong>`).join(', ');
-    ftMsg.innerHTML = `<div class="alert alert-prospective" style="margin:0;font-size:12px;">◆ Non-linear relationship detected for: ${colNames}. GPR or Random Forest will likely outperform Linear Regression on this data.</div>`;
+    ftMsg.innerHTML = `<div class="alert alert-prospective" style="margin:0;font-size:12px;">◆ Linear fit is weak for: ${colNames} — may be non-linear or noisy. GPR or Random Forest may outperform Linear Regression on this data.</div>`;
     ftMsg.style.display = 'block';
   }
 
@@ -2235,7 +2245,10 @@ function renderRetrospectivePanel() {
     </div>`;
   }).join('');
   return `<div class="retro-panel">
-    <div class="retro-title">Step 1 Data Quality Signals</div>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+      <div class="retro-title" style="margin-bottom:0;">Step 1 Data Quality Signals</div>
+      <button class="btn btn-secondary" onclick="goToStep(1)" style="font-size:11px;padding:2px 8px;">← Go back to Step 1</button>
+    </div>
     <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">These signals were detected before training — compare them to the fit results below.</div>
     <div style="font-size:12px;">${items}</div>
   </div>`;

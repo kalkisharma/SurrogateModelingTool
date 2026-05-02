@@ -30,6 +30,10 @@ def _initial_state():
         'results': {},
         'last_predictions': None,
         'train_history': [],
+        'de_corr_b64': None,
+        'de_corr_pairs': None,
+        'de_ft_b64': None,
+        'de_nonlinear_cols': None,
     }
 
 

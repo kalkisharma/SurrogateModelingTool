@@ -16,7 +16,7 @@ or Random Forest), and explore results interactively — all on-device with zero
 conda activate base
 python run_surrogate_tool.py
 ```
-Browser opens automatically at `http://localhost:5000`.
+Browser opens automatically at `http://localhost:5001`.
 
 ---
 
@@ -139,6 +139,12 @@ Reset on new upload via `_reset_downstream()` in `routes.py`.
     },
     'train_history': [],         # list of last 3 {model_type, kernel_type, timestamp, metrics}
 
+    # ---- Data Explorer cache (cleared by _reset_downstream('columns')) ----
+    'de_corr_b64': None,         # str | None — cached correlation heatmap PNG
+    'de_corr_pairs': None,       # list | None — [{col_a, col_b, r}] pairs with |r| >= 0.92
+    'de_ft_b64': None,           # str | None — cached feature-target scatter grid PNG
+    'de_nonlinear_cols': None,   # list | None — feature names with linear R² < 0.7
+
     # ---- Step 4 ----
     'last_predictions': None,    # pd.DataFrame | None — for download
 }
@@ -163,6 +169,8 @@ All routes are on the `main` Blueprint, registered with no URL prefix.
 | GET | `/api/sensitivity` | `?feature=X&target=Y[&ref_<col>=val...]` | `{plot_b64, feature, target}` |
 | GET | `/api/surface` | `?feature_x=X&feature_y=Y&target=Z` | `{plot_b64, feature_x, feature_y, target}` |
 | GET | `/api/learning_curve` | `?target=Y` | `{plot_b64, target, final_train_r2, final_val_r2, val_still_rising}` |
+| GET | `/api/data_explorer` | — | `{corr_heatmap_b64, feat_target_grid_b64, high_corr_pairs, nonlinear_hint_cols}` |
+| GET | `/api/unusual_runs` | `?doe_type=grid\|lhs\|random` | `{plot_b64, top_runs, doe_caveat}` |
 
 ### Critical route implementation notes
 
@@ -189,6 +197,12 @@ y_pred, y_std = gpr.predict(X_scaled, return_std=True)
 **`/api/download/config`**: Serializes `STATE['train_config']` to JSON. Also injects `target_cols` (not stored in `train_config` directly).
 
 **`/api/download/model/<target>`**: uses `attachment_filename=` (Flask 1.x). If upgraded to Flask 2.x, change to `download_name=`.
+
+**`/api/data_explorer`**: Returns the correlation heatmap and feature-target scatter plots. Results are cached in `STATE['de_corr_b64']` etc. on first call and returned directly on subsequent calls — no re-render. Cache is invalidated by `_reset_downstream(state, 'columns')` so re-confirming columns always triggers fresh computation.
+
+**`/api/unusual_runs`**: Runs Isolation Forest (`contamination = max(0.05, min(0.1, 5/n))`) on `df_clean[feature_cols].dropna()`. Returns lollipop chart, top-N scored rows, and an optional `doe_caveat` string when `doe_type=grid` (structured grids have edge/corner points that naturally score high — not errors). Not cached — user-triggered on demand.
+
+**`_reset_downstream(state, level)`**: On `level='columns'`, now also clears the four `de_*` cache keys in addition to training results. On `level='upload'`, the upload-level state wipe reaches those keys through the columns clear.
 
 ---
 
@@ -281,7 +295,9 @@ joblib.dump(pipeline, filepath)
 
 ### `get_summary(df) → dict`
 Returns: `{shape, columns, dtypes, null_counts, stats}` — all JSON-serializable.
-`stats` only populated for numeric columns: `{col: {min, max, mean}}`.
+`stats` populated for numeric columns: `{col: {min, max, mean, skew, cv}}`.
+- `skew`: pandas `.skew()` — 0 = symmetric; >1 right-skewed, <-1 left-skewed
+- `cv`: coefficient of variation = std / |mean|; very small (< 0.01) → "barely varies" badge in summary table
 
 ### `clean_data(df, feature_cols, target_cols) → (df_clean, n_dropped)`
 Selects only the specified columns, drops rows with any NaN, resets index.
@@ -304,6 +320,24 @@ about "identical left == right" — these are harmless.
 IQR-based outlier detection per column. Returns dict `{col: {row_indices, lo, hi, values}}`.
 Only columns with at least one outlier are included. Skips non-numeric and zero-IQR (constant) columns.
 Called in `/api/set_columns`. Frontend renders results in the outlier panel with `renderOutlierPanel()`.
+
+### `get_correlation_heatmap_b64(df, feature_cols, threshold=0.92) → (plot_b64, high_corr_pairs)`
+Pearson correlation heatmap for feature columns. `RdBu_r` colormap, annotated with r values.
+`high_corr_pairs`: list of `{col_a, col_b, r}` for pairs with |r| ≥ threshold.
+Returns `('', [])` when fewer than 2 numeric feature columns.
+
+### `get_feat_target_grid_b64(df, feature_cols, target_cols, max_feat_cols=3) → (plot_b64, nonlinear_hint_cols)`
+Feature vs target scatter grid with linear trend line (polyfit degree 1). Caps at 3 features across.
+`nonlinear_hint_cols`: features whose linear R² < 0.7 against at least one target.
+Message shown to engineer: "Linear fit is weak — may be non-linear or noisy." (not "non-linear detected")
+`suptitle` uses `y=0.98` (not 1.01) to prevent clipping under tight_layout.
+
+### `get_unusual_runs_b64(df, feature_cols, top_n=10) → (plot_b64, top_runs)`
+Isolation Forest multivariate anomaly detection; lollipop chart of top-N unusual rows.
+- Uses `df[cols].dropna()` (not `fillna(mean)`) — imputing mean distorts anomaly scores
+- `contamination = max(0.05, min(0.1, 5 / n))` — avoids forcing false positives on small datasets
+- Preserves original DataFrame indices in row labels and `top_runs` list
+- Returns `('', [])` when fewer than 2 numeric features or fewer than 8 clean rows
 
 ---
 
@@ -331,6 +365,8 @@ const appState = {
     modelType: 'linear', trained: false, currentStep: 1,
     featureMedians: {},        // {col: float} — pre-filled from /api/train response
     explorationHistory: [],    // client-side only, max 20 entries {inputs, predictions}
+    step1Flags: [],            // [{type, label, detail}] — populated by populateStep1Flags()
+    nonlinearFeatures: [],     // feature names flagged as weak linear fit by loadDataExplorer()
 };
 const STEP_GATES = {
     2: () => appState.featureCols.length > 0,
@@ -393,6 +429,13 @@ function goToStep(n) { /* checks gate, swaps .active class, updates progress bar
 | `lc-caption-{target}` | Dynamic caption text below learning curve plot label |
 | `help-metrics-{target}` | Metric help card per target (R², RMSE, MAE explanations) |
 | `help-plot-{type}-{target}` | Per-plot per-target help cards (parity/residuals/importance/sens/surface/lc) |
+| `data-explorer-section` | `<details class="panel">` — collapsible Data Explorer (sibling of `column-selection-panel`, shown after column confirm) |
+| `de-loading` / `de-error` | Loading spinner and error banner inside Data Explorer |
+| `de-corr-img` / `de-corr-msg` | F1: correlation heatmap image + warning message div |
+| `de-ft-img` / `de-ft-msg` | F2: feature-target scatter image + weak-linearity hint div |
+| `de-ur-img` / `de-ur-top` / `de-ur-caveat` | F4: unusual run lollipop image, top-runs list, DoE caveat |
+| `doe-type-select` | F4: DoE type dropdown (grid / lhs / random) |
+| `de-prospective` | Prospective hint div shown after F1/F2 load |
 
 ### Key JS Functions Added in UX Upgrade
 | Function | Purpose |
@@ -408,6 +451,12 @@ function goToStep(n) { /* checks gate, swaps .active class, updates progress bar
 | `renderExplorationPlots()` | Rebuilds all SVG exploration charts from `appState.explorationHistory` |
 | `clearExplorationHistory()` | Empties `appState.explorationHistory` and re-renders |
 | `downloadExplorationHistory()` | Client-side CSV blob download from `appState.explorationHistory` |
+| `populateStep1Flags()` | Checks target |skew|>1.5 and feature cv<0.01; pushes `{type, label, detail}` entries to `appState.step1Flags` |
+| `distributionBadge(skew)` | Returns styled HTML span: ▶▶/▶/●/◀/◀◀ based on skew value |
+| `coverageBadge(cv)` | Returns "barely varies" badge span if cv < 0.01, else `''` |
+| `loadDataExplorer()` | Fetches `/api/data_explorer`; populates F1/F2; bridges high_corr_pairs to `step1Flags`; shows prospective hint. Duplicate-call-safe (checks de-loading visibility). |
+| `runUnusualDetector()` | Fetches `/api/unusual_runs?doe_type=…`; renders F4 lollipop chart, DoE caveat, and top-runs list |
+| `renderRetrospectivePanel()` | Returns violet `.retro-panel` HTML from `appState.step1Flags` with inline "← Go back to Step 1" button. Inserted at top of `renderResults()`. |
 
 ### Sensitivity Plot Flow
 1. User selects a feature from `<select class="sensitivity-feature-select" data-target="{target}">`
@@ -443,6 +492,16 @@ function goToStep(n) { /* checks gate, swaps .active class, updates progress bar
 5. Max 20 entries — oldest dropped when full; `clearExplorationHistory()` resets
 6. `downloadExplorationHistory()` builds CSV blob client-side (no server route)
 
+### Data Explorer Flow (Step 1, after column confirm)
+1. `confirmColumns()` calls `populateStep1Flags()` — checks summary stats for |skew|>1.5 (targets) and cv<0.01 (features); stores findings in `appState.step1Flags`
+2. `data-explorer-section` is shown (`display:block`) and reset to closed (`removeAttribute('open')`); stale images/messages cleared
+3. User expands `<details>` → `toggle` event fires `loadDataExplorer()` (duplicate-safe: returns early if already loading)
+4. `loadDataExplorer()` fetches `/api/data_explorer` — server returns cached results on 2nd+ open (P1 cache)
+5. F1 (heatmap) image shown; if `high_corr_pairs` non-empty: warning rendered with "← Uncheck a column" link; pairs pushed to `appState.step1Flags`
+6. F2 (scatter) image shown; if `nonlinear_hint_cols` non-empty: "Linear fit is weak — may be non-linear or noisy" message shown; stored in `appState.nonlinearFeatures`
+7. F4: user selects DoE type then clicks "Run Detector" → `runUnusualDetector()` fetches `/api/unusual_runs`; renders lollipop + caveat + top-runs table
+8. After training (Step 3): `renderResults()` prepends `renderRetrospectivePanel()` — shows all `appState.step1Flags` with "← Go back to Step 1" button
+
 ### Plot Rendering Pattern (all plots)
 ```javascript
 imgElement.src = 'data:image/png;base64,' + data.some_b64_field;
@@ -453,7 +512,12 @@ imgElement.src = 'data:image/png;base64,' + data.some_b64_field;
 ## Git History
 
 ```
-(latest)  feat: Round 2 UX — outlier pairplot overlay, Step 2 help cards, sensitivity range display, grey exploration chart
+(latest)  fix: Data Explorer expert review — bug fixes, caching, UX improvements
+          (B1: IsolationForest dropna not fillna, original indices preserved; B2: weak-linearity wording;
+           B3: suptitle y=0.98; B4: adaptive contamination; P1: de_ cache in APP_STATE;
+           U1: data-explorer-section moved outside column panel; U2: retro panel back-link;
+           U3: high-corr warning with Uncheck button; port 5000→5001 doc fix)
+775d918   docs: update CLAUDE.md for Round 2 UX changes
 0e0cbc5   feat: Round 2 UX — outlier pairplot overlay, Step 2 help cards, sensitivity range display, grey exploration chart
           (pairplot orange ghost overlay; 5x ? cards in Step 2; sensitivity training-range lines+text;
            reference inputs open by default with min-max hints; exploration chart grey #e2e8f0)
@@ -567,6 +631,14 @@ and 1+ numeric target columns, then use the browser UI.
 27. Click "⬇ Download History" — confirm CSV has correct columns and values
 28. Click "Clear" — confirm plot resets and download button hides
 29. Step 3: Train RF → verify "200 trees" info panel visible; 2D surface selects appear
+30. After column confirm — confirm "Explore Data Relationships" appears as a separate panel BELOW the column panel (not inside it)
+31. Expand Data Explorer → confirm F1 heatmap and F2 scatter load automatically; loading spinner disappears
+32. Close and re-open Data Explorer → confirm no loading spinner (cached — instant)
+33. Re-confirm columns → confirm Data Explorer collapses and re-opening triggers a fresh fetch
+34. F2: if NACA 0012 shows non-linear features → confirm message reads "Linear fit is weak — may be non-linear or noisy" (not "Non-linear relationship detected")
+35. F1: if high correlation detected → confirm warning has "← Uncheck a column" button
+36. F4: select "Structured grid" + click "Run Detector" → confirm DoE caveat appears and lollipop chart shows
+37. Train any model → confirm Step 3 retrospective panel shows Step 1 flags AND has "← Go back to Step 1" button
 
 ---
 
@@ -579,3 +651,5 @@ and 1+ numeric target columns, then use the browser UI.
 - **Step 3 sensitivity reference live update**: Reference inputs in the Step 3 sensitivity panel already work (`sens-ref-{target}-{col}` inputs). Could add a "Update all sensitivity plots" button to reload all visible plots at once after changing multiple reference values.
 
 - **Multi-target exploration chart layout**: When 3+ targets are selected, exploration charts stack vertically. Could move to a 2-column grid for space efficiency.
+
+- **Data Explorer: "Remove column" action**: High-correlation warning could uncheck the suggested column's checkbox directly. Requires two-way binding between the Data Explorer and the column-selection checkboxes — more involved refactor.
