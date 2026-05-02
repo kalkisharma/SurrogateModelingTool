@@ -516,7 +516,20 @@ imgElement.src = 'data:image/png;base64,' + data.some_b64_field;
 ## Git History
 
 ```
-(latest)  feat: Configure tab (Step 2) expert review — 18 fixes across bugs, UX, validation, and intelligence
+(latest)  feat: Configure tab hyperparameter definitions — 13 expert-reviewed clarity fixes
+          (D1: RF depth "high bias"/"low bias" → "may miss sharp gradients"/"may fail on unseen points";
+           D2: Min Samples hint removes "leaf" jargon → "CFD runs in each prediction region";
+           D3: Normalize label removes "StandardScaler" → "(recommended)";
+           D4: Alpha hint rewritten: "keeps GPR math solver stable"; adds "values above 0.1 smooth predictions";
+           D5: RF info box removes MDI parenthetical → "feature importance scores show which inputs most affect predictions";
+           G1: Length scale hint adds "If accuracy poor, don't change this — check data/Data Explorer";
+           G3: Normalize card adds "Leave checked — unchecking almost never beneficial";
+           G4: k-fold card adds "k=3 for <20 runs; k=5 for 50+";
+           G5: Panel gets "These settings control how the model learns..." descriptor;
+           G6: Max depth hint rewritten to action voice;
+           T1: Comparison table adds "Change from default when:" row;
+           T2: Table footnote: "For smoothly varying aerodynamic data, linear models can perform as well as GPR")
+          feat: Configure tab (Step 2) expert review — 18 fixes across bugs, UX, validation, and intelligence
           (B1: alpha step=any value=1e-6; B2: RF info box blue + "Will train 200 trees"; B3: Linear accuracy "High if data is linear";
            B4: CV card names R² metric; U1: "numerical regularisation" label + hint; U2: redundant normalize hint removed;
            U3: GPR/RF panel headers; U4: RF Unlimited label warns overfitting; U5: kernel card auto-optimize note;
