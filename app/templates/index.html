@@ -689,11 +689,11 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
           <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:6px;">
             <div style="display:flex;align-items:center;gap:4px;">
               <label style="font-size:11px;color:var(--text-muted);">X-axis</label>
-              <select id="de-sc-x" onchange="updateScatterRangeHints()" style="font-size:12px;padding:3px 6px;border:1px solid var(--border);border-radius:4px;background:white;"></select>
+              <select id="de-sc-x" style="font-size:12px;padding:3px 6px;border:1px solid var(--border);border-radius:4px;background:white;"></select>
             </div>
             <div style="display:flex;align-items:center;gap:4px;">
               <label style="font-size:11px;color:var(--text-muted);">Y-axis</label>
-              <select id="de-sc-y" onchange="updateScatterRangeHints()" style="font-size:12px;padding:3px 6px;border:1px solid var(--border);border-radius:4px;background:white;"></select>
+              <select id="de-sc-y" style="font-size:12px;padding:3px 6px;border:1px solid var(--border);border-radius:4px;background:white;"></select>
             </div>
             <div style="display:flex;align-items:center;gap:4px;">
               <label style="font-size:11px;color:var(--text-muted);">Colour by</label>
@@ -703,20 +703,12 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
             </div>
             <button onclick="runScatterPlot()" style="font-size:12px;padding:4px 12px;background:var(--accent);color:white;border:none;border-radius:4px;cursor:pointer;white-space:nowrap;">Plot</button>
           </div>
-          <!-- Row 2: range filters + log scale -->
-          <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:8px;font-size:11px;color:var(--text-muted);">
-            <div style="display:flex;align-items:center;gap:4px;">
-              X range
-              <input type="number" id="de-sc-xmin" step="any" style="width:76px;font-size:11px;padding:2px 5px;border:1px solid var(--border);border-radius:3px;" oninput="debouncedScatterPlot()">
-              <span>to</span>
-              <input type="number" id="de-sc-xmax" step="any" style="width:76px;font-size:11px;padding:2px 5px;border:1px solid var(--border);border-radius:3px;" oninput="debouncedScatterPlot()">
-            </div>
-            <div style="display:flex;align-items:center;gap:4px;">
-              Y range
-              <input type="number" id="de-sc-ymin" step="any" style="width:76px;font-size:11px;padding:2px 5px;border:1px solid var(--border);border-radius:3px;" oninput="debouncedScatterPlot()">
-              <span>to</span>
-              <input type="number" id="de-sc-ymax" step="any" style="width:76px;font-size:11px;padding:2px 5px;border:1px solid var(--border);border-radius:3px;" oninput="debouncedScatterPlot()">
-            </div>
+          <!-- Row 2: per-column parameter filter grid + log scale -->
+          <div style="margin-bottom:6px;font-size:11px;color:var(--text-muted);">
+            Slice data by parameter range: <span style="font-weight:normal;font-size:10px;">(leave empty to include all rows)</span>
+          </div>
+          <div id="de-sc-filters" style="display:flex;flex-wrap:wrap;gap:8px 16px;margin-bottom:8px;"></div>
+          <div style="display:flex;gap:12px;align-items:center;margin-bottom:8px;font-size:11px;color:var(--text-muted);">
             <label style="display:flex;align-items:center;gap:3px;cursor:pointer;"><input type="checkbox" id="de-sc-xlog" onchange="debouncedScatterPlot()"> Log X</label>
             <label style="display:flex;align-items:center;gap:3px;cursor:pointer;"><input type="checkbox" id="de-sc-ylog" onchange="debouncedScatterPlot()"> Log Y</label>
           </div>
@@ -1338,10 +1330,9 @@ async function confirmColumns() {
   });
   // Reset F3 scatter panel
   appState.unusualScores = {};
-  ['de-sc-xmin', 'de-sc-xmax', 'de-sc-ymin', 'de-sc-ymax'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.value = '';
-  });
+  document.querySelectorAll('[id^="de-sc-flt-"]').forEach(el => { el.value = ''; });
+  const filterContainer = document.getElementById('de-sc-filters');
+  if (filterContainer) filterContainer.innerHTML = '';
   const scXlog = document.getElementById('de-sc-xlog');
   const scYlog = document.getElementById('de-sc-ylog');
   if (scXlog) scXlog.checked = false;
@@ -2401,21 +2392,30 @@ function populateScatterDropdowns() {
     if (unusualOpt) scColor.appendChild(unusualOpt);
   }
 
-  updateScatterRangeHints();
+  // Build per-column filter grid (pre-filled with data min/max)
+  const filterContainer = document.getElementById('de-sc-filters');
+  if (filterContainer) {
+    const stats = (appState.summary || {}).stats || {};
+    filterContainer.innerHTML = allCols.map((col, i) => {
+      const lo = stats[col] ? +stats[col].min.toPrecision(5) : '';
+      const hi = stats[col] ? +stats[col].max.toPrecision(5) : '';
+      const hint = stats[col] ? ` (${lo} – ${hi})` : '';
+      return `<div style="display:flex;align-items:center;gap:4px;min-width:220px;">` +
+        `<span style="font-size:11px;color:var(--text-muted);min-width:64px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(col)}">${escHtml(col)}:</span>` +
+        `<input type="number" id="de-sc-flt-${i}-min" data-col="${escHtml(col)}" data-idx="${i}" step="any" value="${lo}" ` +
+          `style="width:72px;font-size:11px;padding:2px 4px;border:1px solid var(--border);border-radius:3px;" ` +
+          `oninput="debouncedScatterPlot()" title="Min${hint}">` +
+        `<span style="font-size:10px;color:var(--text-muted);">to</span>` +
+        `<input type="number" id="de-sc-flt-${i}-max" data-col="${escHtml(col)}" data-idx="${i}" step="any" value="${hi}" ` +
+          `style="width:72px;font-size:11px;padding:2px 4px;border:1px solid var(--border);border-radius:3px;" ` +
+          `oninput="debouncedScatterPlot()" title="Max${hint}">` +
+        `</div>`;
+    }).join('');
+  }
 }
 
 function updateScatterRangeHints() {
-  const stats = (appState.summary || {}).stats || {};
-  [['x', 'de-sc-x'], ['y', 'de-sc-y']].forEach(([axis, selId]) => {
-    const col = (document.getElementById(selId) || {}).value || '';
-    const minEl = document.getElementById(`de-sc-${axis}min`);
-    const maxEl = document.getElementById(`de-sc-${axis}max`);
-    if (minEl && maxEl && stats[col]) {
-      const lo = +stats[col].min.toPrecision(5), hi = +stats[col].max.toPrecision(5);
-      minEl.placeholder = `min (${lo})`;
-      maxEl.placeholder = `max (${hi})`;
-    }
-  });
+  // superseded by per-column filter grid in populateScatterDropdowns()
 }
 
 // ---------------------------------------------------------------------------
@@ -2595,12 +2595,19 @@ async function runScatterPlot() {
   const xCol     = (document.getElementById('de-sc-x')     || {}).value || '';
   const yCol     = (document.getElementById('de-sc-y')     || {}).value || '';
   const colorCol = (document.getElementById('de-sc-color') || {}).value || '';
-  const xMin     = ((document.getElementById('de-sc-xmin') || {}).value || '').trim();
-  const xMax     = ((document.getElementById('de-sc-xmax') || {}).value || '').trim();
-  const yMin     = ((document.getElementById('de-sc-ymin') || {}).value || '').trim();
-  const yMax     = ((document.getElementById('de-sc-ymax') || {}).value || '').trim();
-  const xLog     = (document.getElementById('de-sc-xlog')  || {}).checked ? '1' : '0';
-  const yLog     = (document.getElementById('de-sc-ylog')  || {}).checked ? '1' : '0';
+  const xLog     = (document.getElementById('de-sc-xlog')  || {}).checked;
+  const yLog     = (document.getElementById('de-sc-ylog')  || {}).checked;
+
+  // Collect per-column filters from dynamically-generated grid
+  const filters = [];
+  document.querySelectorAll('[id^="de-sc-flt-"][id$="-min"]').forEach(minEl => {
+    const i = minEl.dataset.idx;
+    const col = minEl.dataset.col;
+    const maxEl = document.getElementById(`de-sc-flt-${i}-max`);
+    const lo = minEl.value.trim();
+    const hi = maxEl ? maxEl.value.trim() : '';
+    if (col) filters.push({ col, min: lo !== '' ? parseFloat(lo) : null, max: hi !== '' ? parseFloat(hi) : null });
+  });
 
   const errEl  = document.getElementById('de-sc-error');
   const imgEl  = document.getElementById('de-sc-img');
@@ -2618,13 +2625,11 @@ async function runScatterPlot() {
     if (errEl) { errEl.textContent = 'Select different columns for X and Y axes.'; errEl.style.display = 'block'; }
     return;
   }
-  if (xMin !== '' && xMax !== '' && parseFloat(xMin) > parseFloat(xMax)) {
-    if (errEl) { errEl.textContent = 'X min must be less than X max.'; errEl.style.display = 'block'; }
-    return;
-  }
-  if (yMin !== '' && yMax !== '' && parseFloat(yMin) > parseFloat(yMax)) {
-    if (errEl) { errEl.textContent = 'Y min must be less than Y max.'; errEl.style.display = 'block'; }
-    return;
+  for (const f of filters) {
+    if (f.min !== null && f.max !== null && f.min > f.max) {
+      if (errEl) { errEl.textContent = `"${f.col}": min must be less than max.`; errEl.style.display = 'block'; }
+      return;
+    }
   }
 
   if (imgEl) imgEl.style.opacity = '0.4';
@@ -2634,16 +2639,14 @@ async function runScatterPlot() {
   if (_scatterAbort) _scatterAbort.abort();
   _scatterAbort = new AbortController();
 
-  const params = new URLSearchParams({ x_col: xCol, y_col: yCol, x_log: xLog, y_log: yLog });
-  if (colorCol) params.set('color_col', colorCol);
-  if (xMin !== '') params.set('x_min', xMin);
-  if (xMax !== '') params.set('x_max', xMax);
-  if (yMin !== '') params.set('y_min', yMin);
-  if (yMax !== '') params.set('y_max', yMax);
-
   let data;
   try {
-    const res = await fetch(`/api/data_scatter?${params.toString()}`, { signal: _scatterAbort.signal });
+    const res = await fetch('/api/data_scatter', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ x_col: xCol, y_col: yCol, color_col: colorCol, x_log: xLog, y_log: yLog, filters }),
+      signal: _scatterAbort.signal,
+    });
     data = await res.json();
     if (!res.ok) {
       if (loadEl) loadEl.style.display = 'none';
@@ -2676,11 +2679,13 @@ async function runScatterPlot() {
   }
   if (capEl) {
     const parts = [];
+    const nActive = filters.filter(f => f.min !== null || f.max !== null).length;
     if (data.n_plotted < data.n_filtered) {
-      parts.push(`Showing ${data.n_plotted} of ${data.n_filtered} rows in this range (random sample).`);
+      parts.push(`Showing ${data.n_plotted} of ${data.n_filtered} rows (random sample).`);
     } else {
       parts.push(`Showing ${data.n_plotted} row${data.n_plotted !== 1 ? 's' : ''}.`);
     }
+    if (nActive > 0) parts.push(`${nActive} parameter filter${nActive !== 1 ? 's' : ''} active.`);
     if (colorCol === 'unusual') parts.push('Colour: red = review (>0.6), orange = monitor (0.4–0.6), blue = typical.');
     if (data.n_color_missing > 0) parts.push(`${data.n_color_missing} row${data.n_color_missing !== 1 ? 's' : ''} with missing colour values shown in grey.`);
     if (data.log_warning) parts.push(data.log_warning);

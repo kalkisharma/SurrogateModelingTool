@@ -172,7 +172,7 @@ All routes are on the `main` Blueprint, registered with no URL prefix.
 | GET | `/api/learning_curve` | `?target=Y` | `{plot_b64, target, final_train_r2, final_val_r2, val_still_rising}` |
 | GET | `/api/data_explorer` | — | `{corr_heatmap_b64, feat_target_grid_b64, high_corr_pairs, nonlinear_hint_cols, n_plotted, n_total_features}` |
 | GET | `/api/unusual_runs` | `?doe_type=grid\|lhs\|random` | `{plot_b64, top_runs, doe_caveat, n_total, flagged_detail, feature_bounds, all_scores}` |
-| GET | `/api/data_scatter` | `?x_col=&y_col=&x_min=&x_max=&y_min=&y_max=&color_col=&x_log=0&y_log=0` | `{plot_b64, n_filtered, n_plotted, n_color_missing, log_warning}` |
+| POST | `/api/data_scatter` | JSON `{x_col, y_col, color_col, x_log, y_log, filters:[{col,min,max}]}` | `{plot_b64, n_filtered, n_plotted, n_color_missing, log_warning}` |
 
 ### Critical route implementation notes
 
@@ -344,9 +344,10 @@ Isolation Forest multivariate anomaly detection; lollipop chart of top-N unusual
 - Returns `('', [], [])` when fewer than 2 numeric features or fewer than 8 clean rows
 - `all_scores`: `[{row_idx, score}]` for every row (not just top-N) — used by `/api/data_scatter` for colour-by-unusualness
 
-### `get_scatter_plot_b64(df, x_col, y_col, x_min, x_max, y_min, y_max, color_col, unusual_scores, x_log, y_log, max_points=500) → (plot_b64, n_filtered, n_plotted, n_color_missing, log_warning)`
+### `get_scatter_plot_b64(df, x_col, y_col, filters=None, color_col, unusual_scores, x_log, y_log, max_points=500) → (plot_b64, n_filtered, n_plotted, n_color_missing, log_warning)`
 Custom scatter plot for any two numeric columns.
-- Applies range filters first (correct `filter → sample` ordering), then random-samples to `max_points`
+- `filters`: list of `{'col': str, 'min': float|None, 'max': float|None}` — covers any/all columns (feature + target); all filters applied as a combined mask with `pd.notna()` NaN exclusion before sampling
+- Applies all filters first (correct `filter → sample` ordering), then random-samples to `max_points`
 - `color_col='unusual'` + `unusual_scores` dict: three-tier `#dc2626`/`#f97316`/`#2563EB` (>0.6 / 0.4–0.6 / ≤0.4); draws legend
 - `color_col=<col_name>`: viridis colormap + colorbar; NaN values coloured `#94a3b8` (grey); returns `n_color_missing`
 - Default (no colour): `#2563EB`, `alpha=0.55`, `s=18` — matches F2 aesthetic
@@ -451,7 +452,8 @@ function goToStep(n) { /* checks gate, swaps .active class, updates progress bar
 | `de-ft-img` / `de-ft-msg` / `de-ft-caption` | F2: feature-target scatter image, weak-linearity hint, "Showing N of M" caption |
 | `de-sc-x` / `de-sc-y` | F3: X-axis and Y-axis column selector dropdowns |
 | `de-sc-color` | F3: colour-by dropdown (None / col / "Unusualness score" after detector runs) |
-| `de-sc-xmin` / `de-sc-xmax` / `de-sc-ymin` / `de-sc-ymax` | F3: range filter inputs (debounced 500ms, pre-filled with data min/max as placeholder) |
+| `de-sc-filters` | F3: container `<div>` for dynamically-generated per-column filter rows (populated by `populateScatterDropdowns()`) |
+| `de-sc-flt-{i}-min` / `de-sc-flt-{i}-max` | F3: per-column range filter inputs; `i` = column index in allCols; `data-col` attr = column name; pre-filled with data min/max values |
 | `de-sc-xlog` / `de-sc-ylog` | F3: log-scale checkboxes |
 | `de-sc-img` / `de-sc-caption` / `de-sc-error` / `de-sc-placeholder` | F3: scatter image, caption, error, empty-state text |
 | `de-ur-img` / `de-ur-top` / `de-ur-caveat` / `de-ur-legend` | F4: lollipop image, top-runs list, DoE caveat, colour legend |
@@ -479,10 +481,10 @@ function goToStep(n) { /* checks gate, swaps .active class, updates progress bar
 | `distributionBadge(skew)` | Returns styled HTML span: ▶▶/▶/●/◀/◀◀ based on skew value |
 | `coverageBadge(cv)` | Returns "barely varies" badge span if cv < 0.01, else `''` |
 | `loadDataExplorer()` | Fetches `/api/data_explorer`; populates F1/F2; bridges high_corr_pairs to `step1Flags`; shows prospective hint; calls `populateScatterDropdowns()` for F3. Duplicate-call-safe. |
-| `populateScatterDropdowns()` | Fills F3 X/Y/colour-by dropdowns with all feature+target cols; defaults Y to second col; calls `updateScatterRangeHints()` |
-| `updateScatterRangeHints()` | Updates F3 range input placeholders with data min/max from `appState.summary.stats` for the currently selected X/Y columns |
+| `populateScatterDropdowns()` | Fills F3 X/Y/colour-by dropdowns with all feature+target cols; defaults Y to second col; generates per-column filter grid in `#de-sc-filters` pre-filled with data min/max values |
+| `updateScatterRangeHints()` | No-op stub (superseded by per-column filter grid in `populateScatterDropdowns()`) |
 | `runUnusualDetector()` | Fetches `/api/unusual_runs?doe_type=…`; renders F4 lollipop, legend, caveat, top-runs table; stores `appState.unusualScores`; appends "Unusualness score" option to F3 colour-by dropdown |
-| `runScatterPlot()` | Fetches `/api/data_scatter`; validates same-col/inverted-range; AbortController cancels in-flight; opacity-fade loading; renders F3 image + caption |
+| `runScatterPlot()` | POSTs to `/api/data_scatter` with JSON body; collects `filters` from `[id^="de-sc-flt-"][id$="-min"]` querySelectorAll; validates all filter pairs; AbortController cancels in-flight; opacity-fade loading; caption shows row count + active filter count |
 | `debouncedScatterPlot()` | 500ms debounce wrapper for `runScatterPlot()`; only fires if F3 image is already visible (range filter re-plot, not initial) |
 | `renderRetrospectivePanel()` | Returns violet `.retro-panel` HTML from `appState.step1Flags` with inline "← Go back to Step 1" button. Inserted at top of `renderResults()`. |
 
@@ -542,7 +544,15 @@ imgElement.src = 'data:image/png;base64,' + data.some_b64_field;
 ## Git History
 
 ```
-(latest)  feat: Data Explorer Option B — custom scatter (F3 panel)
+(latest)  feat: F3 scatter — per-column parameter filter panel
+          (replaced X/Y range inputs with unified per-column filter grid covering all feature+target cols;
+           filters=[{col,min,max}] replaces x_min/x_max/y_min/y_max in get_scatter_plot_b64();
+           combined boolean mask with pd.notna() NaN exclusion; /api/data_scatter changed from GET to POST;
+           populateScatterDropdowns() generates de-sc-flt-{i}-min/max rows pre-filled with data min/max;
+           runScatterPlot() collects filters array, validates all pairs, POSTs JSON body;
+           caption shows "Z parameter filter(s) active"; confirmColumns() resets filter grid container)
+
+          feat: Data Explorer Option B — custom scatter (F3 panel)
           (new "Investigate Any Two Variables" panel between F2 and F4;
            X/Y dropdowns, colour-by dropdown (None/col/unusualness), Plot button;
            range filters debounced 500ms, log X/Y checkboxes;

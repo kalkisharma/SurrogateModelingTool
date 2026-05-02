@@ -377,12 +377,13 @@ def get_unusual_runs_b64(df, feature_cols, top_n=10):
     return plot_b64, top_runs, all_scores
 
 
-def get_scatter_plot_b64(df, x_col, y_col, x_min=None, x_max=None, y_min=None, y_max=None,
+def get_scatter_plot_b64(df, x_col, y_col, filters=None,
                           color_col=None, unusual_scores=None, x_log=False, y_log=False,
                           max_points=500):
     """Custom scatter plot for any two numeric columns.
 
     Applies range filters first, then random-samples to max_points.
+    filters: list of {'col': str, 'min': float|None, 'max': float|None} — any/all columns.
     color_col: column name to colour by (continuous viridis scale), or 'unusual'
                (three-tier palette using unusual_scores dict {row_idx: score}).
     Returns (plot_b64, n_filtered, n_plotted, n_color_missing, log_warning).
@@ -392,14 +393,19 @@ def get_scatter_plot_b64(df, x_col, y_col, x_min=None, x_max=None, y_min=None, y
 
     df_work = df.copy()
 
-    if x_min is not None:
-        df_work = df_work[df_work[x_col] >= x_min]
-    if x_max is not None:
-        df_work = df_work[df_work[x_col] <= x_max]
-    if y_min is not None:
-        df_work = df_work[df_work[y_col] >= y_min]
-    if y_max is not None:
-        df_work = df_work[df_work[y_col] <= y_max]
+    if filters:
+        for f in filters:
+            col = f.get('col')
+            lo = f.get('min')
+            hi = f.get('max')
+            if not col or col not in df_work.columns:
+                continue
+            mask = pd.notna(df_work[col])
+            if lo is not None:
+                mask &= df_work[col] >= lo
+            if hi is not None:
+                mask &= df_work[col] <= hi
+            df_work = df_work[mask]
 
     df_work = df_work.dropna(subset=[x_col, y_col])
     n_filtered = len(df_work)

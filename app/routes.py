@@ -695,14 +695,15 @@ def unusual_runs():
 # Custom scatter (Data Explorer F3)
 # ---------------------------------------------------------------------------
 
-@main.route('/api/data_scatter')
+@main.route('/api/data_scatter', methods=['POST'])
 def data_scatter():
     state = _state()
     if state['df_clean'] is None or not state['feature_cols']:
         return jsonify({'error': 'No data. Complete Step 1 first.'}), 400
 
-    x_col = request.args.get('x_col', '').strip()
-    y_col = request.args.get('y_col', '').strip()
+    body = request.get_json(force=True) or {}
+    x_col = body.get('x_col', '').strip()
+    y_col = body.get('y_col', '').strip()
     if not x_col or not y_col:
         return jsonify({'error': 'x_col and y_col are required.'}), 400
 
@@ -710,28 +711,16 @@ def data_scatter():
     if x_col not in all_cols or y_col not in all_cols:
         return jsonify({'error': 'Column not in selected feature or target list.'}), 400
 
-    def _float(key):
-        v = request.args.get(key, '').strip()
-        if not v:
-            return None
-        try:
-            return float(v)
-        except (ValueError, TypeError):
-            return None
-
-    x_min = _float('x_min')
-    x_max = _float('x_max')
-    y_min = _float('y_min')
-    y_max = _float('y_max')
-    color_col = request.args.get('color_col', '').strip() or None
-    x_log = request.args.get('x_log', '0') == '1'
-    y_log = request.args.get('y_log', '0') == '1'
+    color_col = (body.get('color_col') or '').strip() or None
+    x_log = bool(body.get('x_log', False))
+    y_log = bool(body.get('y_log', False))
+    filters = body.get('filters', [])  # [{col, min, max}, ...]
 
     unusual_scores = state.get('de_unusual_scores')
 
     plot_b64, n_filtered, n_plotted, n_color_missing, log_warning = data_utils.get_scatter_plot_b64(
         state['df_clean'], x_col, y_col,
-        x_min=x_min, x_max=x_max, y_min=y_min, y_max=y_max,
+        filters=filters,
         color_col=color_col, unusual_scores=unusual_scores,
         x_log=x_log, y_log=y_log,
     )
