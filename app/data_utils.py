@@ -267,6 +267,25 @@ def get_feat_target_grid_b64(df, feature_cols, target_cols, max_feat_cols=3):
             ax.set_ylabel(targ, fontsize=8)
             ax.tick_params(labelsize=7)
 
+    for feat in feat_cols[ncols:]:
+        for targ in targ_cols:
+            x = df[feat].values.astype(float)
+            y = df[targ].values.astype(float)
+            mask = np.isfinite(x) & np.isfinite(y)
+            xm, ym = x[mask], y[mask]
+            if len(xm) >= 3:
+                try:
+                    coeffs = np.polyfit(xm, ym, 1)
+                    y_pred_lin = np.polyval(coeffs, xm)
+                    ss_res = float(np.sum((ym - y_pred_lin) ** 2))
+                    ss_tot = float(np.sum((ym - ym.mean()) ** 2))
+                    r2_lin = 1.0 - ss_res / ss_tot if ss_tot > 1e-12 else 1.0
+                    if r2_lin < 0.7 and feat not in nonlinear_hint_cols:
+                        nonlinear_hint_cols.append(feat)
+                        break
+                except Exception:
+                    pass
+
     fig.suptitle('What Your Model Will Learn  (red line = linear trend)',
                  fontsize=10, y=0.98)
     fig.patch.set_facecolor('white')

@@ -603,23 +603,28 @@ def data_explorer():
     if state['df_clean'] is None or not state['feature_cols']:
         return jsonify({'error': 'No data. Complete Step 1 first.'}), 400
 
+    feature_cols = state['feature_cols']
+    n_total_features = len(feature_cols)
+    n_plotted = min(n_total_features, 6)
+
     if state.get('de_corr_b64') is not None:
         return jsonify({
             'corr_heatmap_b64': state['de_corr_b64'],
             'feat_target_grid_b64': state['de_ft_b64'],
             'high_corr_pairs': state['de_corr_pairs'],
             'nonlinear_hint_cols': state['de_nonlinear_cols'],
+            'n_plotted': n_plotted,
+            'n_total_features': n_total_features,
         })
 
     df_clean = state['df_clean']
-    feature_cols = state['feature_cols']
     target_cols = state['target_cols']
 
     heatmap_b64, high_corr_pairs = data_utils.get_correlation_heatmap_b64(
         df_clean, feature_cols
     )
     feat_target_b64, nonlinear_hint_cols = data_utils.get_feat_target_grid_b64(
-        df_clean, feature_cols, target_cols
+        df_clean, feature_cols, target_cols, max_feat_cols=n_plotted
     )
 
     state['de_corr_b64'] = heatmap_b64
@@ -632,6 +637,8 @@ def data_explorer():
         'feat_target_grid_b64': feat_target_b64,
         'high_corr_pairs': high_corr_pairs,
         'nonlinear_hint_cols': nonlinear_hint_cols,
+        'n_plotted': n_plotted,
+        'n_total_features': n_total_features,
     })
 
 
@@ -647,6 +654,22 @@ def unusual_runs():
 
     plot_b64, top_runs = data_utils.get_unusual_runs_b64(df_clean, feature_cols)
 
+    n_total = len(df_clean)
+    flagged_rows = [r for r in top_runs if r['score'] > 0.6]
+    if flagged_rows:
+        outlier_flags = data_utils.get_outlier_flags(df_clean, feature_cols)
+        feature_bounds = {col: {'lo': info['lo'], 'hi': info['hi']}
+                          for col, info in outlier_flags.items()}
+        flagged_detail = []
+        for r in flagged_rows:
+            row_idx = r['row_idx']
+            vals = {col: round(float(df_clean.loc[row_idx, col]), 4)
+                    for col in feature_cols if row_idx in df_clean.index}
+            flagged_detail.append({'row_idx': row_idx, 'score': r['score'], 'values': vals})
+    else:
+        feature_bounds = {}
+        flagged_detail = []
+
     doe_caveat = None
     if doe_type == 'grid':
         doe_caveat = (
@@ -659,4 +682,7 @@ def unusual_runs():
         'plot_b64': plot_b64,
         'top_runs': top_runs,
         'doe_caveat': doe_caveat,
+        'n_total': n_total,
+        'flagged_detail': flagged_detail,
+        'feature_bounds': feature_bounds,
     })

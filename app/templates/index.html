@@ -636,6 +636,12 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
       <div style="padding-top:14px;">
         <div id="de-loading" class="alert alert-info" style="display:none;font-size:12px;">Analysing dataset…</div>
         <div id="de-error" class="alert alert-error" style="display:none;font-size:12px;"></div>
+        <p style="font-size:12px;color:var(--text-muted);margin-bottom:14px;">
+          Three checks before you train:
+          <strong>(1)</strong> are any inputs redundant? &nbsp;
+          <strong>(2)</strong> are any relationships non-linear? &nbsp;
+          <strong>(3)</strong> are any runs suspicious?
+        </p>
 
         <!-- F1: Correlation heatmap -->
         <div style="margin-bottom:18px;">
@@ -663,6 +669,7 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
           </div>
           <div id="de-ft-msg" style="display:none;margin-bottom:8px;"></div>
           <img id="de-ft-img" src="" alt="Feature-target scatter" style="display:none;max-width:100%;border-radius:8px;">
+          <div id="de-ft-caption" style="display:none;font-size:11px;color:var(--text-muted);margin-top:4px;"></div>
         </div>
 
         <!-- F4: Unusual run detector -->
@@ -688,6 +695,11 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
           <div id="de-ur-caveat" style="display:none;margin-bottom:8px;"></div>
           <div id="de-ur-loading" style="display:none;font-size:12px;color:var(--text-muted);margin-bottom:6px;">Running analysis…</div>
           <img id="de-ur-img" src="" alt="Unusual run detector" style="display:none;max-width:100%;border-radius:8px;">
+          <div id="de-ur-legend" style="display:none;font-size:11px;color:var(--text-muted);margin-top:4px;">
+            <span style="color:#dc2626;">●</span> Review (&gt;0.6) &nbsp;&nbsp;
+            <span style="color:#f97316;">●</span> Monitor (0.4–0.6) &nbsp;&nbsp;
+            <span style="color:#2563EB;">●</span> Typical (≤0.4)
+          </div>
           <div id="de-ur-top" style="display:none;margin-top:8px;"></div>
         </div>
 
@@ -2263,9 +2275,17 @@ async function loadDataExplorer() {
   // F2: Feature-target scatter
   const ftImg = document.getElementById('de-ft-img');
   const ftMsg = document.getElementById('de-ft-msg');
+  const ftCap = document.getElementById('de-ft-caption');
   if (data.feat_target_grid_b64 && ftImg) {
     ftImg.src = 'data:image/png;base64,' + data.feat_target_grid_b64;
     ftImg.style.display = 'block';
+  }
+  if (ftCap && data.n_plotted != null && data.n_total_features != null) {
+    const p = data.n_plotted, t = data.n_total_features;
+    ftCap.textContent = p < t
+      ? `Showing ${p} of ${t} input features. Linear fit checked for all ${t}.`
+      : `Showing all ${p} input feature${p !== 1 ? 's' : ''}.`;
+    ftCap.style.display = 'block';
   }
   if (data.nonlinear_hint_cols && data.nonlinear_hint_cols.length > 0 && ftMsg) {
     appState.nonlinearFeatures = data.nonlinear_hint_cols;
@@ -2322,15 +2342,38 @@ async function runUnusualDetector() {
   if (data.plot_b64 && imgEl) {
     imgEl.src = 'data:image/png;base64,' + data.plot_b64;
     imgEl.style.display = 'block';
+    const legEl = document.getElementById('de-ur-legend');
+    if (legEl) legEl.style.display = 'block';
   }
-  if (data.top_runs && data.top_runs.length > 0 && topEl) {
-    const highRuns = data.top_runs.filter(r => r.score > 0.6);
+  if (topEl) {
+    const highRuns = (data.top_runs || []).filter(r => r.score > 0.6);
+    const nTotal = data.n_total || '';
+    const nShown = (data.top_runs || []).length;
+    const countLine = nTotal ? `<div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Showing top ${nShown} of ${nTotal} runs.</div>` : '';
     if (highRuns.length > 0) {
-      const runList = highRuns.map(r => `Row ${r.row_idx} (score: ${r.score})`).join(' · ');
-      topEl.innerHTML = `<div class="alert alert-warning" style="margin:0;font-size:12px;">⚠ Rows worth reviewing: ${escHtml(runList)}</div>`;
+      const k = highRuns.length;
+      let html = `<div class="alert alert-warning" style="margin:0;font-size:12px;">⚠ ${k} run${k !== 1 ? 's' : ''} above the review threshold — inspect them in your source data for setup errors before training. A high score means this run is atypical, not necessarily wrong.</div>${countLine}`;
+      if (data.flagged_detail && data.flagged_detail.length > 0) {
+        const featCols = data.flagged_detail[0] ? Object.keys(data.flagged_detail[0].values) : [];
+        const bounds = data.feature_bounds || {};
+        const headers = data.flagged_detail.map(r =>
+          `<th style="padding:4px 8px;text-align:right;white-space:nowrap;">Row ${r.row_idx}<br><span style="font-weight:normal;color:var(--text-muted);">★${r.score.toFixed(2)}</span></th>`
+        ).join('');
+        const rows = featCols.map(col => {
+          const cells = data.flagged_detail.map(r => {
+            const v = r.values[col];
+            const b = bounds[col];
+            const oor = b != null && (v < b.lo || v > b.hi);
+            return `<td style="padding:4px 8px;text-align:right;${oor ? 'background:#fef2f2;' : ''}">${v != null ? v : '—'}</td>`;
+          }).join('');
+          return `<tr><td style="padding:4px 8px;font-weight:500;">${escHtml(col)}</td>${cells}</tr>`;
+        }).join('');
+        html += `<div style="overflow-x:auto;margin-top:8px;"><table style="font-size:11px;border-collapse:collapse;width:100%;"><thead><tr><th style="padding:4px 8px;text-align:left;">Feature</th>${headers}</tr></thead><tbody>${rows}</tbody></table><div style="font-size:10px;color:var(--text-muted);margin-top:3px;">Red cells are outside the IQR range for that feature.</div></div>`;
+      }
+      topEl.innerHTML = html;
       topEl.style.display = 'block';
-    } else {
-      topEl.innerHTML = `<div class="alert alert-success" style="margin:0;font-size:12px;">✓ No runs scored above the review threshold (0.6). Dataset looks internally consistent.</div>`;
+    } else if ((data.top_runs || []).length > 0) {
+      topEl.innerHTML = `<div class="alert alert-success" style="margin:0;font-size:12px;">✓ No runs scored above the review threshold (0.6). Dataset looks internally consistent.</div>${countLine}`;
       topEl.style.display = 'block';
     }
   }
