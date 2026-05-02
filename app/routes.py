@@ -34,6 +34,7 @@ def _reset_downstream(state, level='upload'):
             'results': {}, 'last_predictions': None,
             'de_corr_b64': None, 'de_corr_pairs': None,
             'de_ft_b64': None, 'de_nonlinear_cols': None,
+            'de_unusual_scores': None,
         })
 
 
@@ -652,7 +653,8 @@ def unusual_runs():
     df_clean = state['df_clean']
     feature_cols = state['feature_cols']
 
-    plot_b64, top_runs = data_utils.get_unusual_runs_b64(df_clean, feature_cols)
+    plot_b64, top_runs, all_scores = data_utils.get_unusual_runs_b64(df_clean, feature_cols)
+    state['de_unusual_scores'] = {r['row_idx']: r['score'] for r in all_scores}
 
     n_total = len(df_clean)
     flagged_rows = [r for r in top_runs if r['score'] > 0.6]
@@ -685,4 +687,59 @@ def unusual_runs():
         'n_total': n_total,
         'flagged_detail': flagged_detail,
         'feature_bounds': feature_bounds,
+        'all_scores': all_scores,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Custom scatter (Data Explorer F3)
+# ---------------------------------------------------------------------------
+
+@main.route('/api/data_scatter')
+def data_scatter():
+    state = _state()
+    if state['df_clean'] is None or not state['feature_cols']:
+        return jsonify({'error': 'No data. Complete Step 1 first.'}), 400
+
+    x_col = request.args.get('x_col', '').strip()
+    y_col = request.args.get('y_col', '').strip()
+    if not x_col or not y_col:
+        return jsonify({'error': 'x_col and y_col are required.'}), 400
+
+    all_cols = state['feature_cols'] + state['target_cols']
+    if x_col not in all_cols or y_col not in all_cols:
+        return jsonify({'error': 'Column not in selected feature or target list.'}), 400
+
+    def _float(key):
+        v = request.args.get(key, '').strip()
+        if not v:
+            return None
+        try:
+            return float(v)
+        except (ValueError, TypeError):
+            return None
+
+    x_min = _float('x_min')
+    x_max = _float('x_max')
+    y_min = _float('y_min')
+    y_max = _float('y_max')
+    color_col = request.args.get('color_col', '').strip() or None
+    x_log = request.args.get('x_log', '0') == '1'
+    y_log = request.args.get('y_log', '0') == '1'
+
+    unusual_scores = state.get('de_unusual_scores')
+
+    plot_b64, n_filtered, n_plotted, n_color_missing, log_warning = data_utils.get_scatter_plot_b64(
+        state['df_clean'], x_col, y_col,
+        x_min=x_min, x_max=x_max, y_min=y_min, y_max=y_max,
+        color_col=color_col, unusual_scores=unusual_scores,
+        x_log=x_log, y_log=y_log,
+    )
+
+    return jsonify({
+        'plot_b64': plot_b64,
+        'n_filtered': n_filtered,
+        'n_plotted': n_plotted,
+        'n_color_missing': n_color_missing,
+        'log_warning': log_warning,
     })

@@ -637,10 +637,11 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
         <div id="de-loading" class="alert alert-info" style="display:none;font-size:12px;">Analysing dataset…</div>
         <div id="de-error" class="alert alert-error" style="display:none;font-size:12px;"></div>
         <p style="font-size:12px;color:var(--text-muted);margin-bottom:14px;">
-          Three checks before you train:
+          Four checks before you train:
           <strong>(1)</strong> are any inputs redundant? &nbsp;
           <strong>(2)</strong> are any relationships non-linear? &nbsp;
-          <strong>(3)</strong> are any runs suspicious?
+          <strong>(3)</strong> investigate specific relationships? &nbsp;
+          <strong>(4)</strong> are any runs suspicious?
         </p>
 
         <!-- F1: Correlation heatmap -->
@@ -670,6 +671,60 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
           <div id="de-ft-msg" style="display:none;margin-bottom:8px;"></div>
           <img id="de-ft-img" src="" alt="Feature-target scatter" style="display:none;max-width:100%;border-radius:8px;">
           <div id="de-ft-caption" style="display:none;font-size:11px;color:var(--text-muted);margin-top:4px;"></div>
+        </div>
+
+        <!-- F3: Investigate any two variables -->
+        <div style="margin-bottom:18px;">
+          <div style="font-size:12px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:6px;">
+            Investigate Any Two Variables
+            <button class="btn-help" onclick="toggleHelp('help-de-scatter')" title="What is this?">?</button>
+          </div>
+          <div id="help-de-scatter" class="help-card" style="display:none;margin-bottom:8px;">
+            <strong>Investigate Any Two Variables</strong><br>
+            Use this to check specific relationships your model needs to learn — look for curves, clusters, or data gaps.<br>
+            Colour by a third variable to reveal regime structure (e.g. colour by AoA on a CD–Mach scatter).<br>
+            After running the Unusual Run Detector below, you can also colour by unusualness score to highlight suspicious points.
+          </div>
+          <!-- Row 1: column selectors + colour + plot button -->
+          <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:6px;">
+            <div style="display:flex;align-items:center;gap:4px;">
+              <label style="font-size:11px;color:var(--text-muted);">X-axis</label>
+              <select id="de-sc-x" onchange="updateScatterRangeHints()" style="font-size:12px;padding:3px 6px;border:1px solid var(--border);border-radius:4px;background:white;"></select>
+            </div>
+            <div style="display:flex;align-items:center;gap:4px;">
+              <label style="font-size:11px;color:var(--text-muted);">Y-axis</label>
+              <select id="de-sc-y" onchange="updateScatterRangeHints()" style="font-size:12px;padding:3px 6px;border:1px solid var(--border);border-radius:4px;background:white;"></select>
+            </div>
+            <div style="display:flex;align-items:center;gap:4px;">
+              <label style="font-size:11px;color:var(--text-muted);">Colour by</label>
+              <select id="de-sc-color" style="font-size:12px;padding:3px 6px;border:1px solid var(--border);border-radius:4px;background:white;">
+                <option value="">None</option>
+              </select>
+            </div>
+            <button onclick="runScatterPlot()" style="font-size:12px;padding:4px 12px;background:var(--accent);color:white;border:none;border-radius:4px;cursor:pointer;white-space:nowrap;">Plot</button>
+          </div>
+          <!-- Row 2: range filters + log scale -->
+          <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:8px;font-size:11px;color:var(--text-muted);">
+            <div style="display:flex;align-items:center;gap:4px;">
+              X range
+              <input type="number" id="de-sc-xmin" step="any" style="width:76px;font-size:11px;padding:2px 5px;border:1px solid var(--border);border-radius:3px;" oninput="debouncedScatterPlot()">
+              <span>to</span>
+              <input type="number" id="de-sc-xmax" step="any" style="width:76px;font-size:11px;padding:2px 5px;border:1px solid var(--border);border-radius:3px;" oninput="debouncedScatterPlot()">
+            </div>
+            <div style="display:flex;align-items:center;gap:4px;">
+              Y range
+              <input type="number" id="de-sc-ymin" step="any" style="width:76px;font-size:11px;padding:2px 5px;border:1px solid var(--border);border-radius:3px;" oninput="debouncedScatterPlot()">
+              <span>to</span>
+              <input type="number" id="de-sc-ymax" step="any" style="width:76px;font-size:11px;padding:2px 5px;border:1px solid var(--border);border-radius:3px;" oninput="debouncedScatterPlot()">
+            </div>
+            <label style="display:flex;align-items:center;gap:3px;cursor:pointer;"><input type="checkbox" id="de-sc-xlog" onchange="debouncedScatterPlot()"> Log X</label>
+            <label style="display:flex;align-items:center;gap:3px;cursor:pointer;"><input type="checkbox" id="de-sc-ylog" onchange="debouncedScatterPlot()"> Log Y</label>
+          </div>
+          <div id="de-sc-error" style="display:none;font-size:11px;color:#dc2626;margin-bottom:6px;"></div>
+          <div id="de-sc-placeholder" style="font-size:11px;color:var(--text-muted);padding:8px 0;">Select columns above and click Plot.</div>
+          <div id="de-sc-loading" style="display:none;font-size:11px;color:var(--text-muted);margin-bottom:4px;">Updating…</div>
+          <img id="de-sc-img" src="" alt="Custom scatter" style="display:none;max-width:100%;border-radius:8px;transition:opacity 0.2s;">
+          <div id="de-sc-caption" style="display:none;font-size:11px;color:var(--text-muted);margin-top:4px;"></div>
         </div>
 
         <!-- F4: Unusual run detector -->
@@ -1018,6 +1073,7 @@ const appState = {
   step1Flags: [],
   nonlinearFeatures: [],
   recommendedModel: null,
+  unusualScores: {},
 };
 
 // ---------------------------------------------------------------------------
@@ -1107,6 +1163,8 @@ async function handleFileUpload(file) {
   }
 
   appState.summary = data.summary;
+  appState.unusualScores = {};
+  appState.nonlinearFeatures = [];
   const [rows, cols] = data.summary.shape;
   document.getElementById('upload-status').textContent = `✓ Uploaded: ${data.filename} (${rows} rows × ${cols} columns)`;
 
@@ -1269,14 +1327,32 @@ async function confirmColumns() {
     deSec.removeAttribute('open');
   }
   // Clear stale data explorer content
-  ['de-corr-img', 'de-ft-img', 'de-ur-img'].forEach(id => {
+  ['de-corr-img', 'de-ft-img', 'de-ur-img', 'de-sc-img'].forEach(id => {
     const el = document.getElementById(id);
-    if (el) { el.src = ''; el.style.display = 'none'; }
+    if (el) { el.src = ''; el.style.display = 'none'; el.style.opacity = '1'; }
   });
-  ['de-corr-msg', 'de-ft-msg', 'de-ur-caveat', 'de-ur-top', 'de-prospective'].forEach(id => {
+  ['de-corr-msg', 'de-ft-msg', 'de-ur-caveat', 'de-ur-top', 'de-prospective',
+   'de-sc-error', 'de-sc-caption', 'de-sc-loading'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.style.display = 'none';
   });
+  // Reset F3 scatter panel
+  appState.unusualScores = {};
+  ['de-sc-xmin', 'de-sc-xmax', 'de-sc-ymin', 'de-sc-ymax'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  const scXlog = document.getElementById('de-sc-xlog');
+  const scYlog = document.getElementById('de-sc-ylog');
+  if (scXlog) scXlog.checked = false;
+  if (scYlog) scYlog.checked = false;
+  const scPlac = document.getElementById('de-sc-placeholder');
+  if (scPlac) scPlac.style.display = 'block';
+  const scColor = document.getElementById('de-sc-color');
+  if (scColor) {
+    Array.from(scColor.options).forEach(o => { if (o.value === 'unusual' || o.disabled) scColor.removeChild(o); });
+    scColor.value = '';
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2301,6 +2377,45 @@ async function loadDataExplorer() {
     prospEl.innerHTML = `<div class="alert alert-prospective" style="font-size:12px;">◆ ${totalFlags} data quality signal${totalFlags > 1 ? 's' : ''} found — these will be shown again in Step 3 alongside your model results so you can compare.</div>`;
     prospEl.style.display = 'block';
   }
+
+  // F3: Populate custom scatter column dropdowns
+  populateScatterDropdowns();
+}
+
+function populateScatterDropdowns() {
+  const allCols = (appState.featureCols || []).concat(appState.targetCols || []);
+  const scX = document.getElementById('de-sc-x');
+  const scY = document.getElementById('de-sc-y');
+  const scColor = document.getElementById('de-sc-color');
+  if (!scX || !scY || allCols.length < 2) return;
+
+  const opts = allCols.map(c => `<option value="${escHtml(c)}">${escHtml(c)}</option>`).join('');
+  scX.innerHTML = opts;
+  scY.innerHTML = opts;
+  if (scY.options.length > 1) scY.selectedIndex = 1;
+
+  // Colour by: None + all cols (unusualness added after detector runs)
+  const unusualOpt = scColor ? Array.from(scColor.options).find(o => o.value === 'unusual') : null;
+  if (scColor) {
+    scColor.innerHTML = '<option value="">None</option>' + opts;
+    if (unusualOpt) scColor.appendChild(unusualOpt);
+  }
+
+  updateScatterRangeHints();
+}
+
+function updateScatterRangeHints() {
+  const stats = (appState.summary || {}).stats || {};
+  [['x', 'de-sc-x'], ['y', 'de-sc-y']].forEach(([axis, selId]) => {
+    const col = (document.getElementById(selId) || {}).value || '';
+    const minEl = document.getElementById(`de-sc-${axis}min`);
+    const maxEl = document.getElementById(`de-sc-${axis}max`);
+    if (minEl && maxEl && stats[col]) {
+      const lo = +stats[col].min.toPrecision(5), hi = +stats[col].max.toPrecision(5);
+      minEl.placeholder = `min (${lo})`;
+      maxEl.placeholder = `max (${hi})`;
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -2334,6 +2449,23 @@ async function runUnusualDetector() {
   }
 
   if (loadEl) loadEl.style.display = 'none';
+
+  // Store all scores client-side and add colour-by option to F3
+  if (data.all_scores && data.all_scores.length > 0) {
+    appState.unusualScores = {};
+    data.all_scores.forEach(r => { appState.unusualScores[r.row_idx] = r.score; });
+    const scColor = document.getElementById('de-sc-color');
+    if (scColor && !Array.from(scColor.options).some(o => o.value === 'unusual')) {
+      const sep = document.createElement('option');
+      sep.disabled = true;
+      sep.textContent = '──────────';
+      scColor.appendChild(sep);
+      const opt = document.createElement('option');
+      opt.value = 'unusual';
+      opt.textContent = 'Unusualness score (from detector ↑)';
+      scColor.appendChild(opt);
+    }
+  }
 
   if (data.doe_caveat && cavEl) {
     cavEl.innerHTML = `<div class="alert alert-info" style="margin:0;font-size:12px;">${escHtml(data.doe_caveat)}</div>`;
@@ -2444,6 +2576,120 @@ function recommendModel(nRows, nFeatures) {
            reason: `${nRows} runs — medium dataset. Random Forest balances accuracy and training speed well at this size.${nonlinearStr}` };
 }
 
+// ---------------------------------------------------------------------------
+// F3: Custom scatter
+// ---------------------------------------------------------------------------
+
+let _scatterDebounceTimer = null;
+let _scatterAbort = null;
+
+function debouncedScatterPlot() {
+  clearTimeout(_scatterDebounceTimer);
+  _scatterDebounceTimer = setTimeout(() => {
+    const img = document.getElementById('de-sc-img');
+    if (img && img.style.display !== 'none') runScatterPlot();
+  }, 500);
+}
+
+async function runScatterPlot() {
+  const xCol     = (document.getElementById('de-sc-x')     || {}).value || '';
+  const yCol     = (document.getElementById('de-sc-y')     || {}).value || '';
+  const colorCol = (document.getElementById('de-sc-color') || {}).value || '';
+  const xMin     = ((document.getElementById('de-sc-xmin') || {}).value || '').trim();
+  const xMax     = ((document.getElementById('de-sc-xmax') || {}).value || '').trim();
+  const yMin     = ((document.getElementById('de-sc-ymin') || {}).value || '').trim();
+  const yMax     = ((document.getElementById('de-sc-ymax') || {}).value || '').trim();
+  const xLog     = (document.getElementById('de-sc-xlog')  || {}).checked ? '1' : '0';
+  const yLog     = (document.getElementById('de-sc-ylog')  || {}).checked ? '1' : '0';
+
+  const errEl  = document.getElementById('de-sc-error');
+  const imgEl  = document.getElementById('de-sc-img');
+  const capEl  = document.getElementById('de-sc-caption');
+  const loadEl = document.getElementById('de-sc-loading');
+  const placEl = document.getElementById('de-sc-placeholder');
+
+  if (errEl) { errEl.textContent = ''; errEl.style.display = 'none'; }
+
+  if (!xCol || !yCol) {
+    if (errEl) { errEl.textContent = 'Select columns for both axes.'; errEl.style.display = 'block'; }
+    return;
+  }
+  if (xCol === yCol) {
+    if (errEl) { errEl.textContent = 'Select different columns for X and Y axes.'; errEl.style.display = 'block'; }
+    return;
+  }
+  if (xMin !== '' && xMax !== '' && parseFloat(xMin) > parseFloat(xMax)) {
+    if (errEl) { errEl.textContent = 'X min must be less than X max.'; errEl.style.display = 'block'; }
+    return;
+  }
+  if (yMin !== '' && yMax !== '' && parseFloat(yMin) > parseFloat(yMax)) {
+    if (errEl) { errEl.textContent = 'Y min must be less than Y max.'; errEl.style.display = 'block'; }
+    return;
+  }
+
+  if (imgEl) imgEl.style.opacity = '0.4';
+  if (loadEl) loadEl.style.display = 'block';
+  if (placEl) placEl.style.display = 'none';
+
+  if (_scatterAbort) _scatterAbort.abort();
+  _scatterAbort = new AbortController();
+
+  const params = new URLSearchParams({ x_col: xCol, y_col: yCol, x_log: xLog, y_log: yLog });
+  if (colorCol) params.set('color_col', colorCol);
+  if (xMin !== '') params.set('x_min', xMin);
+  if (xMax !== '') params.set('x_max', xMax);
+  if (yMin !== '') params.set('y_min', yMin);
+  if (yMax !== '') params.set('y_max', yMax);
+
+  let data;
+  try {
+    const res = await fetch(`/api/data_scatter?${params.toString()}`, { signal: _scatterAbort.signal });
+    data = await res.json();
+    if (!res.ok) {
+      if (loadEl) loadEl.style.display = 'none';
+      if (imgEl) imgEl.style.opacity = '1';
+      if (errEl) { errEl.textContent = data.error || 'Scatter plot failed.'; errEl.style.display = 'block'; }
+      return;
+    }
+  } catch (e) {
+    if (e.name === 'AbortError') return;
+    if (loadEl) loadEl.style.display = 'none';
+    if (imgEl) imgEl.style.opacity = '1';
+    if (errEl) { errEl.textContent = 'Network error: ' + e.message; errEl.style.display = 'block'; }
+    return;
+  }
+
+  if (loadEl) loadEl.style.display = 'none';
+
+  if (!data.plot_b64 || data.n_filtered === 0) {
+    if (imgEl) { imgEl.style.display = 'none'; imgEl.style.opacity = '1'; }
+    if (capEl) capEl.style.display = 'none';
+    if (placEl) placEl.style.display = 'none';
+    if (errEl) { errEl.textContent = 'No data matches the current filters — try widening the range.'; errEl.style.display = 'block'; }
+    return;
+  }
+
+  if (imgEl) {
+    imgEl.src = 'data:image/png;base64,' + data.plot_b64;
+    imgEl.style.display = 'block';
+    imgEl.style.opacity = '1';
+  }
+  if (capEl) {
+    const parts = [];
+    if (data.n_plotted < data.n_filtered) {
+      parts.push(`Showing ${data.n_plotted} of ${data.n_filtered} rows in this range (random sample).`);
+    } else {
+      parts.push(`Showing ${data.n_plotted} row${data.n_plotted !== 1 ? 's' : ''}.`);
+    }
+    if (colorCol === 'unusual') parts.push('Colour: red = review (>0.6), orange = monitor (0.4–0.6), blue = typical.');
+    if (data.n_color_missing > 0) parts.push(`${data.n_color_missing} row${data.n_color_missing !== 1 ? 's' : ''} with missing colour values shown in grey.`);
+    if (data.log_warning) parts.push(data.log_warning);
+    capEl.textContent = parts.join(' ');
+    capEl.style.display = 'block';
+  }
+}
+
+// ---------------------------------------------------------------------------
 function applyModelRecommendation(nRows, nFeatures) {
   const rec = recommendModel(nRows, nFeatures);
   appState.recommendedModel = rec;

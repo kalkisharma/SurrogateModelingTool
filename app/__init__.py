@@ -34,6 +34,7 @@ def _initial_state():
         'de_corr_pairs': None,
         'de_ft_b64': None,
         'de_nonlinear_cols': None,
+        'de_unusual_scores': None,
     }
 
 

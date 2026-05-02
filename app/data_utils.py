@@ -369,4 +369,108 @@ def get_unusual_runs_b64(df, feature_cols, top_n=10):
         for i in range(n_show - 1, -1, -1)
     ]
 
-    return plot_b64, top_runs
+    all_scores = [
+        {'row_idx': original_idx[i], 'score': round(float(normalized[i]), 3)}
+        for i in range(len(normalized))
+    ]
+
+    return plot_b64, top_runs, all_scores
+
+
+def get_scatter_plot_b64(df, x_col, y_col, x_min=None, x_max=None, y_min=None, y_max=None,
+                          color_col=None, unusual_scores=None, x_log=False, y_log=False,
+                          max_points=500):
+    """Custom scatter plot for any two numeric columns.
+
+    Applies range filters first, then random-samples to max_points.
+    color_col: column name to colour by (continuous viridis scale), or 'unusual'
+               (three-tier palette using unusual_scores dict {row_idx: score}).
+    Returns (plot_b64, n_filtered, n_plotted, n_color_missing, log_warning).
+    """
+    if x_col not in df.columns or y_col not in df.columns:
+        return '', 0, 0, 0, None
+
+    df_work = df.copy()
+
+    if x_min is not None:
+        df_work = df_work[df_work[x_col] >= x_min]
+    if x_max is not None:
+        df_work = df_work[df_work[x_col] <= x_max]
+    if y_min is not None:
+        df_work = df_work[df_work[y_col] >= y_min]
+    if y_max is not None:
+        df_work = df_work[df_work[y_col] <= y_max]
+
+    df_work = df_work.dropna(subset=[x_col, y_col])
+    n_filtered = len(df_work)
+
+    if n_filtered == 0:
+        return '', 0, 0, 0, None
+
+    if n_filtered > max_points:
+        df_work = df_work.sample(n=max_points, random_state=42)
+    n_plotted = len(df_work)
+
+    x_vals = df_work[x_col].values.astype(float)
+    y_vals = df_work[y_col].values.astype(float)
+
+    log_warning = None
+    if x_log and float(np.nanmin(x_vals)) <= 0:
+        x_log = False
+        log_warning = f"Log scale not applied to X: '{x_col}' has zero or negative values."
+    if y_log and float(np.nanmin(y_vals)) <= 0:
+        y_log = False
+        w2 = f"Log scale not applied to Y: '{y_col}' has zero or negative values."
+        log_warning = (log_warning + ' ' + w2) if log_warning else w2
+
+    fig, ax = plt.subplots(figsize=(6, 4.5))
+    ax.set_facecolor('#fafafa')
+
+    n_color_missing = 0
+
+    if color_col == 'unusual' and unusual_scores is not None:
+        colors = []
+        for idx in df_work.index:
+            s = unusual_scores.get(int(idx), 0.0)
+            colors.append('#dc2626' if s > 0.6 else '#f97316' if s > 0.4 else '#2563EB')
+        ax.scatter(x_vals, y_vals, c=colors, s=18, alpha=0.7,
+                   edgecolors='white', linewidths=0.3, zorder=3)
+        from matplotlib.lines import Line2D
+        ax.legend(handles=[
+            Line2D([0], [0], marker='o', color='w', markerfacecolor='#dc2626', markersize=6, label='Review (>0.6)'),
+            Line2D([0], [0], marker='o', color='w', markerfacecolor='#f97316', markersize=6, label='Monitor (0.4–0.6)'),
+            Line2D([0], [0], marker='o', color='w', markerfacecolor='#2563EB', markersize=6, label='Typical (≤0.4)'),
+        ], fontsize=7, loc='best')
+
+    elif color_col and color_col in df.columns and pd.api.types.is_numeric_dtype(df[color_col]):
+        color_vals = df_work[color_col].values.astype(float)
+        nan_mask = ~np.isfinite(color_vals)
+        n_color_missing = int(nan_mask.sum())
+        if nan_mask.any():
+            ax.scatter(x_vals[nan_mask], y_vals[nan_mask], color='#94a3b8', s=18, alpha=0.55,
+                       edgecolors='white', linewidths=0.3, zorder=3)
+        if (~nan_mask).any():
+            sc = ax.scatter(x_vals[~nan_mask], y_vals[~nan_mask], c=color_vals[~nan_mask],
+                            cmap='viridis', s=18, alpha=0.7, edgecolors='white', linewidths=0.3, zorder=4)
+            plt.colorbar(sc, ax=ax, shrink=0.75, label=color_col, pad=0.02)
+
+    else:
+        ax.scatter(x_vals, y_vals, color='#2563EB', s=18, alpha=0.55,
+                   edgecolors='white', linewidths=0.3, zorder=3)
+
+    if x_log:
+        ax.set_xscale('log')
+    if y_log:
+        ax.set_yscale('log')
+
+    ax.set_xlabel(x_col, fontsize=9)
+    ax.set_ylabel(y_col, fontsize=9)
+    ax.tick_params(labelsize=8)
+    fig.patch.set_facecolor('white')
+    plt.tight_layout()
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+    plt.close(fig)
+    buf.seek(0)
+    return base64.b64encode(buf.read()).decode('utf-8'), n_filtered, n_plotted, n_color_missing, log_warning
