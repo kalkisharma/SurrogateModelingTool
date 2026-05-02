@@ -144,6 +144,7 @@ Reset on new upload via `_reset_downstream()` in `routes.py`.
     'de_corr_pairs': None,       # list | None — [{col_a, col_b, r}] pairs with |r| >= 0.92
     'de_ft_b64': None,           # str | None — cached feature-target scatter grid PNG
     'de_nonlinear_cols': None,   # list | None — feature names with linear R² < 0.7
+    'de_unusual_scores': None,   # dict | None — {row_idx: score} for ALL rows; set by /api/unusual_runs; used by /api/data_scatter
 
     # ---- Step 4 ----
     'last_predictions': None,    # pd.DataFrame | None — for download
@@ -169,8 +170,9 @@ All routes are on the `main` Blueprint, registered with no URL prefix.
 | GET | `/api/sensitivity` | `?feature=X&target=Y[&ref_<col>=val...]` | `{plot_b64, feature, target}` |
 | GET | `/api/surface` | `?feature_x=X&feature_y=Y&target=Z` | `{plot_b64, feature_x, feature_y, target}` |
 | GET | `/api/learning_curve` | `?target=Y` | `{plot_b64, target, final_train_r2, final_val_r2, val_still_rising}` |
-| GET | `/api/data_explorer` | — | `{corr_heatmap_b64, feat_target_grid_b64, high_corr_pairs, nonlinear_hint_cols}` |
-| GET | `/api/unusual_runs` | `?doe_type=grid\|lhs\|random` | `{plot_b64, top_runs, doe_caveat}` |
+| GET | `/api/data_explorer` | — | `{corr_heatmap_b64, feat_target_grid_b64, high_corr_pairs, nonlinear_hint_cols, n_plotted, n_total_features}` |
+| GET | `/api/unusual_runs` | `?doe_type=grid\|lhs\|random` | `{plot_b64, top_runs, doe_caveat, n_total, flagged_detail, feature_bounds, all_scores}` |
+| GET | `/api/data_scatter` | `?x_col=&y_col=&x_min=&x_max=&y_min=&y_max=&color_col=&x_log=0&y_log=0` | `{plot_b64, n_filtered, n_plotted, n_color_missing, log_warning}` |
 
 ### Critical route implementation notes
 
@@ -198,11 +200,13 @@ y_pred, y_std = gpr.predict(X_scaled, return_std=True)
 
 **`/api/download/model/<target>`**: uses `attachment_filename=` (Flask 1.x). If upgraded to Flask 2.x, change to `download_name=`.
 
-**`/api/data_explorer`**: Returns the correlation heatmap and feature-target scatter plots. Results are cached in `STATE['de_corr_b64']` etc. on first call and returned directly on subsequent calls — no re-render. Cache is invalidated by `_reset_downstream(state, 'columns')` so re-confirming columns always triggers fresh computation.
+**`/api/data_explorer`**: Returns correlation heatmap and feature-target scatter. Passes `max_feat_cols=min(n_features, 6)` to `get_feat_target_grid_b64()`. Results cached in `STATE['de_*']` on first call; returned directly on subsequent calls. Returns `n_plotted` and `n_total_features` in both cached and fresh paths so the client caption ("Showing N of M") always works. Cache invalidated by `_reset_downstream(state, 'columns')`.
 
-**`/api/unusual_runs`**: Runs Isolation Forest (`contamination = max(0.05, min(0.1, 5/n))`) on `df_clean[feature_cols].dropna()`. Returns lollipop chart, top-N scored rows, and an optional `doe_caveat` string when `doe_type=grid` (structured grids have edge/corner points that naturally score high — not errors). Not cached — user-triggered on demand.
+**`/api/unusual_runs`**: Runs Isolation Forest on `df_clean[feature_cols].dropna()`. Returns lollipop chart, top-10 `top_runs`, `doe_caveat` for grid DoE, plus: `n_total` (total clean rows), `flagged_detail` (feature values for rows scoring >0.6), `feature_bounds` (IQR lo/hi per column for cell highlighting), and `all_scores` (scores for ALL rows as `[{row_idx, score}]`). Also writes `STATE['de_unusual_scores'] = {row_idx: score}` for use by `/api/data_scatter`. Not cached — user-triggered on demand.
 
-**`_reset_downstream(state, level)`**: On `level='columns'`, now also clears the four `de_*` cache keys in addition to training results. On `level='upload'`, the upload-level state wipe reaches those keys through the columns clear.
+**`/api/data_scatter`**: Custom scatter for any two numeric columns from the selected feature+target set. Applies range filters first, then random-samples to 500 (`filter → sample` order). Supports three colour modes: none (blue `#2563EB`), third column (viridis + colorbar; NaN rows in grey `#94a3b8`), unusualness (`STATE['de_unusual_scores']`, three-tier red/orange/blue). Log scale applied per axis; returns `log_warning` if column has non-positive values. Returns `n_filtered` (pre-sample) and `n_plotted` (post-sample) for client caption.
+
+**`_reset_downstream(state, level)`**: On `level='columns'`, clears training results and all five `de_*` cache keys including `de_unusual_scores`. On `level='upload'`, same via the columns clear path.
 
 ---
 
@@ -327,17 +331,27 @@ Pearson correlation heatmap for feature columns. `RdBu_r` colormap, annotated wi
 Returns `('', [])` when fewer than 2 numeric feature columns.
 
 ### `get_feat_target_grid_b64(df, feature_cols, target_cols, max_feat_cols=3) → (plot_b64, nonlinear_hint_cols)`
-Feature vs target scatter grid with linear trend line (polyfit degree 1). Caps at 3 features across.
-`nonlinear_hint_cols`: features whose linear R² < 0.7 against at least one target.
+Feature vs target scatter grid with linear trend line (polyfit degree 1). Default cap 3; route passes `min(n, 6)`.
+`nonlinear_hint_cols`: features whose linear R² < 0.7 against at least one target — scans ALL features, not just the plotted ones (second scan loop over `feat_cols[ncols:]` after the plot loop).
 Message shown to engineer: "Linear fit is weak — may be non-linear or noisy." (not "non-linear detected")
 `suptitle` uses `y=0.98` (not 1.01) to prevent clipping under tight_layout.
 
-### `get_unusual_runs_b64(df, feature_cols, top_n=10) → (plot_b64, top_runs)`
+### `get_unusual_runs_b64(df, feature_cols, top_n=10) → (plot_b64, top_runs, all_scores)`
 Isolation Forest multivariate anomaly detection; lollipop chart of top-N unusual rows.
 - Uses `df[cols].dropna()` (not `fillna(mean)`) — imputing mean distorts anomaly scores
 - `contamination = max(0.05, min(0.1, 5 / n))` — avoids forcing false positives on small datasets
 - Preserves original DataFrame indices in row labels and `top_runs` list
-- Returns `('', [])` when fewer than 2 numeric features or fewer than 8 clean rows
+- Returns `('', [], [])` when fewer than 2 numeric features or fewer than 8 clean rows
+- `all_scores`: `[{row_idx, score}]` for every row (not just top-N) — used by `/api/data_scatter` for colour-by-unusualness
+
+### `get_scatter_plot_b64(df, x_col, y_col, x_min, x_max, y_min, y_max, color_col, unusual_scores, x_log, y_log, max_points=500) → (plot_b64, n_filtered, n_plotted, n_color_missing, log_warning)`
+Custom scatter plot for any two numeric columns.
+- Applies range filters first (correct `filter → sample` ordering), then random-samples to `max_points`
+- `color_col='unusual'` + `unusual_scores` dict: three-tier `#dc2626`/`#f97316`/`#2563EB` (>0.6 / 0.4–0.6 / ≤0.4); draws legend
+- `color_col=<col_name>`: viridis colormap + colorbar; NaN values coloured `#94a3b8` (grey); returns `n_color_missing`
+- Default (no colour): `#2563EB`, `alpha=0.55`, `s=18` — matches F2 aesthetic
+- Log scale guard: if column has non-positive values, skips log scale and returns `log_warning` string
+- Returns `('', 0, 0, 0, None)` when no rows remain after filtering
 
 ---
 
@@ -368,6 +382,7 @@ const appState = {
     step1Flags: [],            // [{type, label, detail}] — populated by populateStep1Flags()
     nonlinearFeatures: [],     // feature names flagged as weak linear fit by loadDataExplorer()
     recommendedModel: null,    // {model, name, reason} — set by applyModelRecommendation(); used by onModelTypeChange() to detect overrides
+    unusualScores: {},         // {row_idx: score} — populated from /api/unusual_runs all_scores; used by F3 colour-by-unusual
 };
 const STEP_GATES = {
     2: () => appState.featureCols.length > 0,
@@ -433,8 +448,13 @@ function goToStep(n) { /* checks gate, swaps .active class, updates progress bar
 | `data-explorer-section` | `<details class="panel">` — collapsible Data Explorer (sibling of `column-selection-panel`, shown after column confirm) |
 | `de-loading` / `de-error` | Loading spinner and error banner inside Data Explorer |
 | `de-corr-img` / `de-corr-msg` | F1: correlation heatmap image + warning message div |
-| `de-ft-img` / `de-ft-msg` | F2: feature-target scatter image + weak-linearity hint div |
-| `de-ur-img` / `de-ur-top` / `de-ur-caveat` | F4: unusual run lollipop image, top-runs list, DoE caveat |
+| `de-ft-img` / `de-ft-msg` / `de-ft-caption` | F2: feature-target scatter image, weak-linearity hint, "Showing N of M" caption |
+| `de-sc-x` / `de-sc-y` | F3: X-axis and Y-axis column selector dropdowns |
+| `de-sc-color` | F3: colour-by dropdown (None / col / "Unusualness score" after detector runs) |
+| `de-sc-xmin` / `de-sc-xmax` / `de-sc-ymin` / `de-sc-ymax` | F3: range filter inputs (debounced 500ms, pre-filled with data min/max as placeholder) |
+| `de-sc-xlog` / `de-sc-ylog` | F3: log-scale checkboxes |
+| `de-sc-img` / `de-sc-caption` / `de-sc-error` / `de-sc-placeholder` | F3: scatter image, caption, error, empty-state text |
+| `de-ur-img` / `de-ur-top` / `de-ur-caveat` / `de-ur-legend` | F4: lollipop image, top-runs list, DoE caveat, colour legend |
 | `doe-type-select` | F4: DoE type dropdown (grid / lhs / random) |
 | `de-prospective` | Prospective hint div shown after F1/F2 load |
 
@@ -458,8 +478,12 @@ function goToStep(n) { /* checks gate, swaps .active class, updates progress bar
 | `populateStep1Flags()` | Checks target |skew|>1.5 and feature cv<0.01; pushes `{type, label, detail}` entries to `appState.step1Flags` |
 | `distributionBadge(skew)` | Returns styled HTML span: ▶▶/▶/●/◀/◀◀ based on skew value |
 | `coverageBadge(cv)` | Returns "barely varies" badge span if cv < 0.01, else `''` |
-| `loadDataExplorer()` | Fetches `/api/data_explorer`; populates F1/F2; bridges high_corr_pairs to `step1Flags`; shows prospective hint. Duplicate-call-safe (checks de-loading visibility). |
-| `runUnusualDetector()` | Fetches `/api/unusual_runs?doe_type=…`; renders F4 lollipop chart, DoE caveat, and top-runs list |
+| `loadDataExplorer()` | Fetches `/api/data_explorer`; populates F1/F2; bridges high_corr_pairs to `step1Flags`; shows prospective hint; calls `populateScatterDropdowns()` for F3. Duplicate-call-safe. |
+| `populateScatterDropdowns()` | Fills F3 X/Y/colour-by dropdowns with all feature+target cols; defaults Y to second col; calls `updateScatterRangeHints()` |
+| `updateScatterRangeHints()` | Updates F3 range input placeholders with data min/max from `appState.summary.stats` for the currently selected X/Y columns |
+| `runUnusualDetector()` | Fetches `/api/unusual_runs?doe_type=…`; renders F4 lollipop, legend, caveat, top-runs table; stores `appState.unusualScores`; appends "Unusualness score" option to F3 colour-by dropdown |
+| `runScatterPlot()` | Fetches `/api/data_scatter`; validates same-col/inverted-range; AbortController cancels in-flight; opacity-fade loading; renders F3 image + caption |
+| `debouncedScatterPlot()` | 500ms debounce wrapper for `runScatterPlot()`; only fires if F3 image is already visible (range filter re-plot, not initial) |
 | `renderRetrospectivePanel()` | Returns violet `.retro-panel` HTML from `appState.step1Flags` with inline "← Go back to Step 1" button. Inserted at top of `renderResults()`. |
 
 ### Sensitivity Plot Flow
@@ -497,13 +521,15 @@ function goToStep(n) { /* checks gate, swaps .active class, updates progress bar
 6. `downloadExplorationHistory()` builds CSV blob client-side (no server route)
 
 ### Data Explorer Flow (Step 1, after column confirm)
-1. `confirmColumns()` calls `populateStep1Flags()` — checks summary stats for |skew|>1.5 (targets) and cv<0.01 (features); stores findings in `appState.step1Flags`
-2. `data-explorer-section` is shown (`display:block`) and reset to closed (`removeAttribute('open')`); stale images/messages cleared
-3. User expands `<details>` → `toggle` event fires `loadDataExplorer()` (duplicate-safe: returns early if already loading)
-4. `loadDataExplorer()` fetches `/api/data_explorer` — server returns cached results on 2nd+ open (P1 cache)
-5. F1 (heatmap) image shown; if `high_corr_pairs` non-empty: warning rendered with "← Uncheck a column" link; pairs pushed to `appState.step1Flags`
-6. F2 (scatter) image shown; if `nonlinear_hint_cols` non-empty: "Linear fit is weak — may be non-linear or noisy" message shown; stored in `appState.nonlinearFeatures`
-7. F4: user selects DoE type then clicks "Run Detector" → `runUnusualDetector()` fetches `/api/unusual_runs`; renders lollipop + caveat + top-runs table
+Framing line: "Four checks before you train: (1) redundant inputs? (2) non-linear? (3) investigate further? (4) suspicious runs?"
+
+1. `confirmColumns()` calls `populateStep1Flags()`; shows `data-explorer-section`; resets F3 scatter panel and `appState.unusualScores = {}`
+2. User expands `<details>` → `toggle` fires `loadDataExplorer()` (duplicate-safe: returns early if already loading)
+3. `loadDataExplorer()` fetches `/api/data_explorer` — server cached on 2nd+ open; calls `populateScatterDropdowns()` to fill F3 dropdowns
+4. F1: heatmap shown; if `high_corr_pairs` non-empty: warning with "← Uncheck a column" link; pairs pushed to `appState.step1Flags`
+5. F2: scatter shown; caption "Showing N of M features. Linear fit checked for all M."; nonlinear features stored in `appState.nonlinearFeatures`
+6. F3: X/Y/colour dropdowns populated (all feature+target cols); range inputs pre-filled with data min/max as placeholders; user clicks "Plot" for initial render; range input changes debounce-re-plot if image visible
+7. F4: user selects DoE type then clicks "Run Detector" → `runUnusualDetector()` fetches `/api/unusual_runs`; renders lollipop + colour legend + caveat + flagged-row feature table; stores `appState.unusualScores`; adds "Unusualness score" option to F3 colour-by dropdown
 8. After training (Step 3): `renderResults()` prepends `renderRetrospectivePanel()` — shows all `appState.step1Flags` with "← Go back to Step 1" button
 
 ### Plot Rendering Pattern (all plots)
@@ -516,7 +542,22 @@ imgElement.src = 'data:image/png;base64,' + data.some_b64_field;
 ## Git History
 
 ```
-(latest)  feat: Configure tab hyperparameter definitions — 13 expert-reviewed clarity fixes
+(latest)  feat: Data Explorer Option B — custom scatter (F3 panel)
+          (new "Investigate Any Two Variables" panel between F2 and F4;
+           X/Y dropdowns, colour-by dropdown (None/col/unusualness), Plot button;
+           range filters debounced 500ms, log X/Y checkboxes;
+           filter-then-sample ordering; AbortController for race conditions;
+           opacity-fade loading state; client-side validation;
+           /api/data_scatter route; get_scatter_plot_b64() in data_utils;
+           de_unusual_scores STATE key; all_scores added to /api/unusual_runs;
+           framing line updated to 4 checks; F3 reset on column re-confirm + upload)
+          feat: Data Explorer Option A — correctness + UX fixes (C1-C4, U1-U4)
+          (C1: nonlinear scan covers unplotted features; C2: "Showing N of M" caption on F2;
+           C3/C4: unusual run detector flagged-row feature table with IQR cell highlighting,
+           updated action text, "Showing top N of M runs" count;
+           U1: framing line "Three/Four checks before you train";
+           U2: colour legend below lollipop chart; U4: F2 scatter shows up to 6 features)
+          feat: Configure tab hyperparameter definitions — 13 expert-reviewed clarity fixes
           (D1: RF depth "high bias"/"low bias" → "may miss sharp gradients"/"may fail on unseen points";
            D2: Min Samples hint removes "leaf" jargon → "CFD runs in each prediction region";
            D3: Normalize label removes "StandardScaler" → "(recommended)";
@@ -670,7 +711,19 @@ and 1+ numeric target columns, then use the browser UI.
 41. F2: if NACA 0012 shows non-linear features → confirm message reads "Linear fit is weak — may be non-linear or noisy"; recommendation banner in Step 2 references those features
 42. F1: if high correlation detected → confirm warning has "← Uncheck a column" button
 43. F4: select "Structured grid" + click "Run Detector" → confirm DoE caveat appears and lollipop chart shows
-44. Train any model → confirm Step 3 retrospective panel shows Step 1 flags AND has "← Go back to Step 1" button
+44. F4: confirm colour legend appears below lollipop (red/orange/blue dots); confirm "X run(s) above the review threshold" text; confirm feature table with IQR-highlighted cells if any rows >0.6; confirm "Showing top N of M runs" count
+45. F2: confirm "Showing all N input features" or "Showing N of M input features. Linear fit checked for all M." caption below scatter
+46. F3: expand Data Explorer → confirm "Investigate Any Two Variables" section appears between F2 and F4
+47. F3: X/Y dropdowns populated with all columns; Y defaults to second column; range inputs show data min/max as placeholder
+48. F3: select X=AoA, Y=AoA → click Plot → confirm "Select different columns" error appears
+49. F3: select two different columns → click Plot → confirm scatter renders; caption shows row count
+50. F3: set X max < X min → confirm "X min must be less than X max" error before fetch
+51. F3: narrow range filter → confirm caption shows "Showing 50 of 200 rows in this range (random sample)" style text
+52. F3: run Unusual Detector first → confirm "Unusualness score (from detector ↑)" appears in colour-by dropdown
+53. F3: colour by unusualness → confirm plot has red/orange/blue points with legend; caption explains colour tiers
+54. F3: colour by a numeric column → confirm viridis colorbar appears on plot
+55. F3: re-confirm columns → confirm F3 image clears, dropdowns reset, unusualness option removed from colour-by
+56. Train any model → confirm Step 3 retrospective panel shows Step 1 flags AND has "← Go back to Step 1" button
 
 ---
 
@@ -685,3 +738,9 @@ and 1+ numeric target columns, then use the browser UI.
 - **Multi-target exploration chart layout**: When 3+ targets are selected, exploration charts stack vertically. Could move to a 2-column grid for space efficiency.
 
 - **Data Explorer: "Remove column" action**: High-correlation warning could uncheck the suggested column's checkbox directly. Requires two-way binding between the Data Explorer and the column-selection checkboxes — more involved refactor.
+
+- **F3 scatter: "Download this view" button**: Add `format=csv` query param to `/api/data_scatter`; return filtered+sampled DataFrame as CSV. Reuses existing filter logic.
+
+- **F3 scatter: "Investigate in scatter" shortcuts from F1/F2**: After F1/F2 load, add "Plot this pair →" buttons next to high-correlation pair warnings and weak-linearity messages that pre-populate F3 dropdowns and auto-render.
+
+- **F3 scatter: Coverage gap detection**: After plotting, compute axis histogram; if any contiguous gap > 15% of axis range has zero data, add note: "Coverage gap: no data for [col] between [X] and [Y]."
