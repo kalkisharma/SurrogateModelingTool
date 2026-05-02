@@ -367,6 +367,7 @@ const appState = {
     explorationHistory: [],    // client-side only, max 20 entries {inputs, predictions}
     step1Flags: [],            // [{type, label, detail}] — populated by populateStep1Flags()
     nonlinearFeatures: [],     // feature names flagged as weak linear fit by loadDataExplorer()
+    recommendedModel: null,    // {model, name, reason} — set by applyModelRecommendation(); used by onModelTypeChange() to detect overrides
 };
 const STEP_GATES = {
     2: () => appState.featureCols.length > 0,
@@ -443,8 +444,11 @@ function goToStep(n) { /* checks gate, swaps .active class, updates progress bar
 | `toggleHelp(id)` | Show/hide any `.help-card` div by ID |
 | `getRowCountMessage(nRows)` | Returns `{type, text}` upload quality message |
 | `renderDatasetHealthCard(nRows, nFeatures)` | Renders feature-to-run ratio card into `#dataset-health-card` |
-| `recommendModel(nRows, nFeatures)` | Returns `{model, name, reason}` recommendation object |
-| `applyModelRecommendation(nRows, nFeatures)` | Applies recommendation to banner + dropdown |
+| `recommendModel(nRows, nFeatures)` | Returns `{model, name, reason}`; uses `appState.nonlinearFeatures` from Data Explorer; fixes 501–2000 row gap |
+| `applyModelRecommendation(nRows, nFeatures)` | Applies recommendation to banner + dropdown; stores result in `appState.recommendedModel` |
+| `updateTestSizeWarning(pct)` | Warns when test set < 5 rows given current `pct` and `appState.summary.shape[0]` |
+| `updateCvKWarning()` | Warns when cv-k > floor(nRows/2) |
+| `validateStep2()` | Guards Step 3 navigation — checks alpha>0, length_scale>0, cv-k validity; shows `#step2-config-error` |
 | `renderModelHealth(results, targetCols)` | Returns HTML string for colour-coded health banner |
 | `confidenceBadge(value, std)` | Returns HTML badge: High/Moderate/Low confidence with ±σ |
 | `learningCurveCaption(d)` | Returns 1-line diagnostic caption from `final_train_r2`, `final_val_r2`, `val_still_rising` |
@@ -512,7 +516,15 @@ imgElement.src = 'data:image/png;base64,' + data.some_b64_field;
 ## Git History
 
 ```
-(latest)  fix: Data Explorer expert review — bug fixes, caching, UX improvements
+(latest)  feat: Configure tab (Step 2) expert review — 18 fixes across bugs, UX, validation, and intelligence
+          (B1: alpha step=any value=1e-6; B2: RF info box blue + "Will train 200 trees"; B3: Linear accuracy "High if data is linear";
+           B4: CV card names R² metric; U1: "numerical regularisation" label + hint; U2: redundant normalize hint removed;
+           U3: GPR/RF panel headers; U4: RF Unlimited label warns overfitting; U5: kernel card auto-optimize note;
+           U6: "✓ (100 resamples)"; V1: test-set size warning; V2: cv-k > nRows/2 warning;
+           V3: validateStep2() blocks Step 3 nav on invalid inputs; I1: recommendModel uses nonlinearFeatures;
+           I2: GPR time estimate shown when >200 rows; I3: banner updates on manual model override;
+           E4-C: dataset summary numbers bold+accent color; length-scale hint references std-deviation scale)
+          fix: Data Explorer expert review — bug fixes, caching, UX improvements
           (B1: IsolationForest dropna not fillna, original indices preserved; B2: weak-linearity wording;
            B3: suptitle y=0.98; B4: adaptive contamination; P1: de_ cache in APP_STATE;
            U1: data-explorer-section moved outside column panel; U2: retro panel back-link;
@@ -608,37 +620,44 @@ and 1+ numeric target columns, then use the browser UI.
 4. Confirm columns — confirm Dataset Health card renders with ratio assessment; outlier `?` card works
 5. If outliers flagged: confirm pairplot shows hollow orange circles on flagged rows
 6. Toggle "Exclude flagged rows" ON → confirm pairplot regenerates with orange circles still shown on excluded rows
-7. Navigate to Step 2 — confirm compact "Dataset: 96 rows · 4 input features" visible; GPR pre-selected; recommendation banner shows correct reason
-8. Switch model type manually — confirm banner text doesn't change but dropdown follows
-9. Click `?` on "Model Type" → confirm comparison table expands (5 rows × 4 columns: Best for / Accuracy / Speed / Uncertainty / Non-linear)
-10. Select GPR → click `?` on "Kernel" → confirm RBF vs Matérn card expands with engineering language (C_L, C_D, stall reference)
-11. Verify improved hint text on Length Scale and Alpha inputs
-12. Click `?` on "Train / Test Split" → confirm proof-test explanation with 96-run example
-13. Click `?` on "Enable k-fold Cross-Validation" → confirm k-groups explanation
-14. Click `?` on "Normalize inputs" → confirm scale explanation with AoA vs Mach example
-15. Train GPR — confirm model health banner shows green "Good fit"; R² card is green; gap shown
-16. Train Linear (expect poor fit) — confirm health banner amber/red with next steps listed
-17. Click each plot's `?` button — confirm help card expands and collapses correctly
-18. Click "Show Learning Curve" — confirm dynamic caption appears below plot label
-19. Sensitivity: select a feature → confirm "Training range: X — Y" appears below dropdown
-20. Confirm reference inputs `<details>` is open by default and each input shows min–max range hint
-21. Confirm sensitivity plot has two grey dashed boundary lines and faint orange shading outside bounds
-22. Go to Step 4 — enter prediction inside training range (GPR) — confirm confidence badge is green
-23. Enter value outside training range — confirm low-confidence badge + extrapolation warning both appear
-24. Enter 5 predictions — confirm exploration plot has grey (#e2e8f0) training band (not blue)
-25. Confirm legend reads "Grey band = training data range"
-26. Change X-axis dropdown to a feature — confirm plot re-renders in feature space
-27. Click "⬇ Download History" — confirm CSV has correct columns and values
-28. Click "Clear" — confirm plot resets and download button hides
-29. Step 3: Train RF → verify "200 trees" info panel visible; 2D surface selects appear
-30. After column confirm — confirm "Explore Data Relationships" appears as a separate panel BELOW the column panel (not inside it)
-31. Expand Data Explorer → confirm F1 heatmap and F2 scatter load automatically; loading spinner disappears
-32. Close and re-open Data Explorer → confirm no loading spinner (cached — instant)
-33. Re-confirm columns → confirm Data Explorer collapses and re-opening triggers a fresh fetch
-34. F2: if NACA 0012 shows non-linear features → confirm message reads "Linear fit is weak — may be non-linear or noisy" (not "Non-linear relationship detected")
-35. F1: if high correlation detected → confirm warning has "← Uncheck a column" button
-36. F4: select "Structured grid" + click "Run Detector" → confirm DoE caveat appears and lollipop chart shows
-37. Train any model → confirm Step 3 retrospective panel shows Step 1 flags AND has "← Go back to Step 1" button
+7. Navigate to Step 2 — confirm "Dataset:" numbers are bold blue; GPR pre-selected; recommendation banner shows correct reason
+8. Switch model type manually (e.g. Linear) — confirm banner updates to show override message with original recommendation
+9. Switch to GPR with 96 rows — confirm orange time-estimate banner appears ("~X seconds")
+10. Click `?` on "Model Type" → confirm comparison table: Linear accuracy reads "High if data is linear"; bootstrap cell reads "✓ (100 resamples)"
+11. Select GPR → confirm "GPR Hyperparameters" section header visible; alpha input shows "1e-6" not "0.000001"; alpha label reads "numerical regularisation"
+12. Click `?` on "Kernel" → confirm new sentence about both kernels being auto-optimized
+13. Confirm length scale hint references "standard deviation" scale after normalisation
+14. Select RF → confirm "RF Hyperparameters" section header; info box is blue (not green); reads "Will train 200 trees"; Unlimited option warns "overfits unless data is large and clean"
+15. Confirm no duplicate hint text below "Normalize inputs" checkbox (hint removed; ? card remains)
+16. Set test split to 10% with 10-row dataset → confirm small-test-set warning appears
+17. Enable k-fold, set k=8 with 10-row dataset → confirm k-too-large warning appears
+18. Clear alpha field, click "Next: Train Model" → confirm validation error shown, navigation blocked
+19. Click `?` on "Enable k-fold Cross-Validation" → confirm "CV score = average R²" is explicitly stated
+20. Click `?` on "Train / Test Split" → confirm proof-test explanation with 96-run example
+21. Click `?` on "Normalize inputs" → confirm scale explanation with AoA vs Mach example
+22. Train GPR — confirm model health banner shows green "Good fit"; R² card is green; gap shown
+23. Train Linear (expect poor fit) — confirm health banner amber/red with next steps listed
+24. Click each plot's `?` button — confirm help card expands and collapses correctly
+25. Click "Show Learning Curve" — confirm dynamic caption appears below plot label
+26. Sensitivity: select a feature → confirm "Training range: X — Y" appears below dropdown
+27. Confirm reference inputs `<details>` is open by default and each input shows min–max range hint
+28. Confirm sensitivity plot has two grey dashed boundary lines and faint orange shading outside bounds
+29. Go to Step 4 — enter prediction inside training range (GPR) — confirm confidence badge is green
+30. Enter value outside training range — confirm low-confidence badge + extrapolation warning both appear
+31. Enter 5 predictions — confirm exploration plot has grey (#e2e8f0) training band (not blue)
+32. Confirm legend reads "Grey band = training data range"
+33. Change X-axis dropdown to a feature — confirm plot re-renders in feature space
+34. Click "⬇ Download History" — confirm CSV has correct columns and values
+35. Click "Clear" — confirm plot resets and download button hides
+36. Step 3: Train RF → verify RF info panel is blue and reads "Will train 200 trees"; 2D surface selects appear
+37. After column confirm — confirm "Explore Data Relationships" appears as a separate panel BELOW the column panel (not inside it)
+38. Expand Data Explorer → confirm F1 heatmap and F2 scatter load automatically; loading spinner disappears
+39. Close and re-open Data Explorer → confirm no loading spinner (cached — instant)
+40. Re-confirm columns → confirm Data Explorer collapses and re-opening triggers a fresh fetch
+41. F2: if NACA 0012 shows non-linear features → confirm message reads "Linear fit is weak — may be non-linear or noisy"; recommendation banner in Step 2 references those features
+42. F1: if high correlation detected → confirm warning has "← Uncheck a column" button
+43. F4: select "Structured grid" + click "Run Detector" → confirm DoE caveat appears and lollipop chart shows
+44. Train any model → confirm Step 3 retrospective panel shows Step 1 flags AND has "← Go back to Step 1" button
 
 ---
 
