@@ -705,14 +705,16 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
   <div id="step-2" class="step-panel">
 
     <div class="panel">
-      <div id="step2-dataset-summary" style="display:none;font-size:12px;color:var(--text-muted);margin-bottom:14px;padding:6px 12px;background:var(--panel);border-radius:6px;border:1px solid var(--border);">
-        Dataset: <strong id="step2-row-count">—</strong> simulation runs · <strong id="step2-feature-count">—</strong> input features
+      <div id="step2-dataset-summary" style="display:none;font-size:12px;color:var(--text);margin-bottom:14px;padding:6px 12px;background:var(--panel);border-radius:6px;border:1px solid var(--border);">
+        Dataset: <strong id="step2-row-count" style="color:var(--accent);">—</strong> simulation runs · <strong id="step2-feature-count" style="color:var(--accent);">—</strong> input features
       </div>
 
       <div id="model-recommendation-banner" class="alert alert-info" style="display:none;margin-bottom:16px;">
         <strong>Recommended:</strong> <span id="rec-model-name"></span> — <span id="rec-reason"></span>
         <div style="font-size:12px;color:#1e40af;margin-top:4px;">You can override this selection below.</div>
       </div>
+
+      <div id="gpr-time-estimate" style="display:none;margin-bottom:14px;padding:7px 12px;background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;font-size:12px;color:#92400e;"></div>
 
       <div class="panel-title">Model Configuration</div>
 
@@ -738,7 +740,7 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
                 </tr>
                 <tr style="background:#f8fafc;">
                   <td style="padding:4px 8px;font-weight:600;border:1px solid #bfdbfe;">Accuracy</td>
-                  <td style="padding:4px 8px;border:1px solid #bfdbfe;">Low–moderate</td>
+                  <td style="padding:4px 8px;border:1px solid #bfdbfe;">High if data is linear</td>
                   <td style="padding:4px 8px;border:1px solid #bfdbfe;">High on small data</td>
                   <td style="padding:4px 8px;border:1px solid #bfdbfe;">Good on medium–large</td>
                 </tr>
@@ -750,7 +752,7 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
                 </tr>
                 <tr style="background:#f8fafc;">
                   <td style="padding:4px 8px;font-weight:600;border:1px solid #bfdbfe;">Uncertainty (±σ)</td>
-                  <td style="padding:4px 8px;border:1px solid #bfdbfe;">✓ bootstrap</td>
+                  <td style="padding:4px 8px;border:1px solid #bfdbfe;">✓ (100 resamples)</td>
                   <td style="padding:4px 8px;border:1px solid #bfdbfe;">✓ analytical</td>
                   <td style="padding:4px 8px;border:1px solid #bfdbfe;">✓ tree variance</td>
                 </tr>
@@ -772,11 +774,13 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
       </div>
 
       <div id="gpr-panel" style="display:none">
+        <div style="font-size:12px;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #bfdbfe;">GPR Hyperparameters</div>
         <div class="form-group">
           <label for="kernel-type">Kernel <button class="btn-help" onclick="toggleHelp('help-kernel-type')">?</button></label>
           <div id="help-kernel-type" class="help-card" style="display:none;margin-bottom:8px;">
             <p><strong>RBF (Squared Exponential):</strong> Assumes your output changes smoothly everywhere — ideal for aerodynamic coefficients like C<sub>L</sub> and C<sub>D</sub> that vary continuously with angle-of-attack and Mach number. Start here.</p>
             <p><strong>Matérn ν=1.5:</strong> Allows slightly rougher transitions. Better when your response surface has localised non-linearities (e.g. near stall) or when measurements include noise.</p>
+            <p>Both kernels are auto-optimized during training — the choice of kernel affects only the assumed shape of the response surface, not how hard the optimizer works.</p>
           </div>
           <select id="kernel-type">
             <option value="rbf">RBF (Squared Exponential) — smooth, ideal for most aerodynamic data</option>
@@ -786,21 +790,22 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
         <div class="form-group">
           <label for="length-scale">Initial Length Scale</label>
           <input type="number" id="length-scale" value="1.0" min="0.001" step="0.1" style="width:120px">
-          <p class="hint">Starting guess for how quickly the output changes with each input. The optimizer finds the best values automatically — leave at 1.0 unless results look poor.</p>
+          <p class="hint">After normalisation, all features are on the same scale (std=1). A value of 1.0 means the output varies significantly over one standard deviation of the input. Leave at 1.0 — the optimizer adjusts it automatically.</p>
         </div>
         <div class="form-group">
-          <label for="alpha">Alpha (noise level)</label>
-          <input type="number" id="alpha" value="0.000001" min="1e-10" step="0.000001" style="width:160px">
-          <p class="hint">Assumed noise level in your CFD data. Use 1e-6 for clean solver output. Increase to 0.01–0.1 if measurements include physical noise or numerical scatter.</p>
+          <label for="alpha">Alpha (numerical regularisation)</label>
+          <input type="number" id="alpha" value="1e-6" min="1e-10" step="any" style="width:160px" placeholder="e.g. 1e-6">
+          <p class="hint">Numerical regularisation for the GPR solver. Use 1e-6 for clean CFD solver output (deterministic). Increase to 0.01–0.1 for wind-tunnel measurements or convergence scatter.</p>
         </div>
         <div class="alert alert-info">Hyperparameters are auto-optimized via L-BFGS-B (5 random restarts). Optimized values are shown after training.</div>
       </div>
 
       <div id="rf-panel" style="display:none">
+        <div style="font-size:12px;font-weight:600;color:#15803d;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #bbf7d0;">RF Hyperparameters</div>
         <div class="form-group">
           <label for="rf-max-depth">Max Tree Depth</label>
           <select id="rf-max-depth">
-            <option value="0">Unlimited — may overfit small datasets</option>
+            <option value="0">Unlimited — overfits unless data is large and clean (use with caution)</option>
             <option value="3">3 — very smooth, high bias</option>
             <option value="5" selected>5 — balanced (recommended)</option>
             <option value="10">10 — low bias, risk of overfit on small data</option>
@@ -816,7 +821,7 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
           </select>
           <p class="hint">Minimum training points at each leaf. Higher values smooth the response surface. Use 2–5 for noisy data.</p>
         </div>
-        <div class="alert alert-info" style="background:#f0fdf4;border-color:#16a34a;color:#166534;">200 trees trained. Feature importance uses Mean Decrease in Impurity (MDI). Faster than GPR on large datasets.</div>
+        <div class="alert alert-info">Will train 200 trees. Feature importance uses Mean Decrease in Impurity (MDI). Faster than GPR on large datasets.</div>
       </div>
 
       <div class="form-group">
@@ -826,9 +831,10 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
           <p>20% is a good default (e.g. 77 training / 19 test from 96 runs). Use 10–15% if you have fewer than 40 runs — you need enough training data for the model to learn the response surface.</p>
         </div>
         <div style="display:flex;align-items:center;gap:12px;">
-          <input type="range" id="test-size" min="10" max="40" value="20" step="5" oninput="document.getElementById('test-size-display').textContent=this.value+'%'">
+          <input type="range" id="test-size" min="10" max="40" value="20" step="5" oninput="document.getElementById('test-size-display').textContent=this.value+'%';updateTestSizeWarning(parseInt(this.value))">
           <span>Test: <strong id="test-size-display">20%</strong></span>
         </div>
+        <div id="test-size-warning" style="display:none;margin-top:6px;padding:6px 10px;background:var(--warning-bg);border:1px solid var(--warning-border);border-radius:6px;font-size:12px;color:#92400e;"></div>
       </div>
 
       <div class="form-group">
@@ -837,12 +843,13 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
           <label for="use-cv" style="margin-bottom:0;">Enable k-fold Cross-Validation <button class="btn-help" onclick="toggleHelp('help-cv')">?</button></label>
         </div>
         <div id="help-cv" class="help-card" style="display:none;margin-top:8px;">
-          <p>Divides your data into k groups. The model is trained and tested k times, each time using a different group as the test set. The CV score is the average across all k tests — a more reliable accuracy estimate than a single split, at the cost of k× longer training time.</p>
+          <p>Divides your data into k groups. The model is trained and tested k times, each time using a different group as the test set. The CV score is the average R² across all k test folds — a more reliable accuracy estimate than a single split, at the cost of k× longer training time.</p>
           <p>Recommended when you have fewer than 50 simulation runs. For 96+ runs a single 80/20 split is usually sufficient.</p>
         </div>
         <div id="cv-k-panel" style="display:none;margin-top:10px;">
           <label for="cv-k" style="font-size:13px;">Number of folds (k)</label>
-          <input type="number" id="cv-k" value="5" min="2" max="20" step="1" style="width:80px;margin-top:4px;">
+          <input type="number" id="cv-k" value="5" min="2" max="20" step="1" style="width:80px;margin-top:4px;" oninput="updateCvKWarning()">
+          <div id="cv-k-warning" style="display:none;margin-top:6px;padding:6px 10px;background:var(--warning-bg);border:1px solid var(--warning-border);border-radius:6px;font-size:12px;color:#92400e;"></div>
         </div>
       </div>
 
@@ -855,9 +862,10 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
           <p>Rescales all input features to the same numerical range (mean=0, std=1) before training. Essential for GPR and Linear Regression — without it, an angle-of-attack in degrees (0–20) would dominate a Mach number (0.2–0.8) just because its numbers are larger.</p>
           <p>Not required for Random Forest (tree splits are scale-invariant) but kept on for consistency. Safe to leave checked for all model types.</p>
         </div>
-        <p class="hint" style="margin-top:4px;">Recommended for GPR and Linear. Not required for Random Forest (tree splits are scale-invariant).</p>
       </div>
     </div>
+
+    <div id="step2-config-error" style="display:none;margin-bottom:12px;padding:10px 14px;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;font-size:13px;color:#b91c1c;"></div>
 
     <div class="nav-row">
       <button class="btn btn-secondary" onclick="goToStep(1)">← Back</button>
@@ -989,6 +997,7 @@ const appState = {
   iqrMultiplier: 1.5,
   step1Flags: [],
   nonlinearFeatures: [],
+  recommendedModel: null,
 };
 
 // ---------------------------------------------------------------------------
@@ -1257,6 +1266,34 @@ function onModelTypeChange() {
   const val = document.getElementById('model-type').value;
   document.getElementById('gpr-panel').style.display = val === 'gpr' ? 'block' : 'none';
   document.getElementById('rf-panel').style.display = val === 'rf' ? 'block' : 'none';
+
+  // I2: GPR training time estimate
+  const timeEl = document.getElementById('gpr-time-estimate');
+  if (timeEl) {
+    if (val === 'gpr' && appState.summary) {
+      const nRows = appState.summary.shape[0];
+      if (nRows > 200) {
+        const estSec = Math.max(5, Math.round(nRows * nRows / 40000));
+        timeEl.textContent = `GPR training time estimate: ~${estSec} second${estSec === 1 ? '' : 's'} for ${nRows} runs. Consider Random Forest if speed matters.`;
+        timeEl.style.display = 'block';
+      } else {
+        timeEl.style.display = 'none';
+      }
+    } else {
+      timeEl.style.display = 'none';
+    }
+  }
+
+  // I3: Update recommendation banner when engineer overrides the recommendation
+  if (appState.recommendedModel && val !== appState.recommendedModel.model) {
+    const banner = document.getElementById('model-recommendation-banner');
+    const nameEl = document.getElementById('rec-model-name');
+    const reasonEl = document.getElementById('rec-reason');
+    if (banner && nameEl && reasonEl) {
+      nameEl.textContent = val === 'linear' ? 'Linear Regression' : val === 'gpr' ? 'Gaussian Process Regression (GPR)' : 'Random Forest';
+      reasonEl.textContent = `You selected this manually. Original recommendation was ${appState.recommendedModel.name} — ${appState.recommendedModel.reason}`;
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1707,9 +1744,69 @@ function buildStep4() {
   if (appState.explorationHistory.length > 0) renderExplorationPlots();
 }
 
+// ---------------------------------------------------------------------------
+// Step 2 validation helpers
+// ---------------------------------------------------------------------------
+function updateTestSizeWarning(pct) {
+  const el = document.getElementById('test-size-warning');
+  if (!el || !appState.summary) return;
+  const nRows = appState.summary.shape[0];
+  const testN = Math.round(nRows * pct / 100);
+  if (testN < 5) {
+    el.textContent = `Test set will be only ${testN} row${testN === 1 ? '' : 's'} — R² on fewer than 5 points is unreliable. Use a smaller test split or add more data.`;
+    el.style.display = 'block';
+  } else {
+    el.style.display = 'none';
+  }
+}
+
+function updateCvKWarning() {
+  const el = document.getElementById('cv-k-warning');
+  const input = document.getElementById('cv-k');
+  if (!el || !input || !appState.summary) return;
+  const k = parseInt(input.value) || 0;
+  const nRows = appState.summary.shape[0];
+  const maxK = Math.floor(nRows / 2);
+  if (k > maxK) {
+    el.textContent = `k=${k} exceeds half of your ${nRows} rows — each test fold would have fewer than 2 rows. Set k ≤ ${maxK}.`;
+    el.style.display = 'block';
+  } else {
+    el.style.display = 'none';
+  }
+}
+
+function validateStep2() {
+  const errEl = document.getElementById('step2-config-error');
+  const alpha = parseFloat(document.getElementById('alpha').value);
+  const ls = parseFloat(document.getElementById('length-scale').value);
+  const modelType = document.getElementById('model-type').value;
+  const useCv = document.getElementById('use-cv').checked;
+  const k = parseInt(document.getElementById('cv-k').value) || 0;
+  const msgs = [];
+  if (modelType === 'gpr') {
+    if (isNaN(alpha) || alpha <= 0) msgs.push('Alpha must be a positive number (e.g. 1e-6).');
+    if (isNaN(ls) || ls <= 0) msgs.push('Initial Length Scale must be a positive number.');
+  }
+  if (useCv && k < 2) msgs.push('Cross-validation requires at least 2 folds.');
+  if (useCv && appState.summary) {
+    const nRows = appState.summary.shape[0];
+    if (k > Math.floor(nRows / 2)) msgs.push(`k=${k} is too large for ${nRows} rows — set k ≤ ${Math.floor(nRows / 2)}.`);
+  }
+  if (errEl) {
+    if (msgs.length > 0) {
+      errEl.textContent = msgs.join(' ');
+      errEl.style.display = 'block';
+      return false;
+    }
+    errEl.style.display = 'none';
+  }
+  return true;
+}
+
 // Hook step4 setup on navigation
 const origGoToStep = goToStep;
 window.goToStep = function(n) {
+  if (n === 3 && !validateStep2()) return;
   origGoToStep(n);
   if (n === 4 && appState.trained) buildStep4();
   if (n === 2 && appState.summary && appState.featureCols.length > 0) {
@@ -2258,29 +2355,47 @@ function renderRetrospectivePanel() {
 // Model auto-recommendation (Step 2)
 // ---------------------------------------------------------------------------
 function recommendModel(nRows, nFeatures) {
-  if (nRows < 20)
+  const nonlinear = appState.nonlinearFeatures || [];
+  const nonlinearStr = nonlinear.length > 0
+    ? ` Your Data Explorer found weak linear fit for: ${nonlinear.join(', ')}.`
+    : '';
+
+  if (nRows < 20) {
+    // If nonlinear signals exist but dataset is tiny, still must use Linear
     return { model: 'linear',
              name: 'Linear Regression',
              reason: `Only ${nRows} runs — too few for Gaussian Process Regression (GPR) to optimise reliably. Linear Regression is selected as a fast baseline. Add more CFD runs for a better surrogate.` };
-  if (nRows <= 500 && nFeatures <= nRows / 5)
+  }
+  if (nRows <= 500 && nFeatures <= nRows / 5) {
+    if (nonlinear.length > 0)
+      return { model: 'gpr',
+               name: 'Gaussian Process Regression (GPR)',
+               reason: `${nRows} runs, ${nFeatures} features — small dataset with non-linear signals detected.${nonlinearStr} GPR handles non-linear response surfaces and provides confidence estimates (±σ).` };
     return { model: 'gpr',
              name: 'Gaussian Process Regression (GPR)',
              reason: `${nRows} runs, ${nFeatures} features — small dataset. GPR is most accurate on small, clean datasets and provides a confidence estimate (±σ) for every prediction.` };
+  }
   if (nRows <= 500 && nFeatures > nRows / 5)
     return { model: 'rf',
              name: 'Random Forest',
-             reason: `${nFeatures} features for ${nRows} runs is a high input-to-run ratio. Random Forest handles many inputs better than GPR at this data size.` };
+             reason: `${nFeatures} features for ${nRows} runs is a high input-to-run ratio. Random Forest handles many inputs better than GPR at this data size.${nonlinearStr}` };
   if (nRows > 2000)
     return { model: 'rf',
              name: 'Random Forest',
-             reason: `${nRows} runs — large dataset. GPR processing time grows very rapidly with data size. Random Forest gives good accuracy and trains in seconds.` };
+             reason: `${nRows} runs — large dataset. GPR processing time grows very rapidly with data size. Random Forest gives good accuracy and trains in seconds.${nonlinearStr}` };
+  // 501–2000 rows: use GPR if few features and no nonlinear signals, else RF
+  if (nFeatures <= 3 && nonlinear.length === 0)
+    return { model: 'gpr',
+             name: 'Gaussian Process Regression (GPR)',
+             reason: `${nRows} runs, ${nFeatures} features — medium dataset with few inputs. GPR gives accurate predictions and confidence estimates at this size.` };
   return { model: 'rf',
            name: 'Random Forest',
-           reason: `${nRows} runs — medium dataset. Random Forest balances accuracy and training speed well at this size.` };
+           reason: `${nRows} runs — medium dataset. Random Forest balances accuracy and training speed well at this size.${nonlinearStr}` };
 }
 
 function applyModelRecommendation(nRows, nFeatures) {
   const rec = recommendModel(nRows, nFeatures);
+  appState.recommendedModel = rec;
   const banner = document.getElementById('model-recommendation-banner');
   const nameEl = document.getElementById('rec-model-name');
   const reasonEl = document.getElementById('rec-reason');
