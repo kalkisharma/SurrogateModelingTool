@@ -120,7 +120,8 @@ def set_columns():
         return jsonify({'error': f'Too few rows after removing NaNs ({len(df_clean)}). Need at least 5.'}), 400
 
     # Detect IQR outliers before optional exclusion
-    outlier_info = data_utils.get_outlier_flags(df_clean, feature_cols + target_cols)
+    iqr_multiplier = float(body.get('iqr_multiplier', 1.5))
+    outlier_info = data_utils.get_outlier_flags(df_clean, feature_cols + target_cols, multiplier=iqr_multiplier)
 
     # Collect outlier rows for pairplot ghost overlay (before any exclusion)
     all_outlier_idx = set()
@@ -587,4 +588,60 @@ def learning_curve_route():
         'final_train_r2': float(train_scores[-1].mean()),
         'final_val_r2': float(val_scores[-1].mean()),
         'val_still_rising': bool(val_scores[-1].mean() > val_scores[-2].mean()),
+    })
+
+
+# ---------------------------------------------------------------------------
+# Data Explorer (on-demand, Step 1)
+# ---------------------------------------------------------------------------
+
+@main.route('/api/data_explorer')
+def data_explorer():
+    state = _state()
+    if state['df_clean'] is None or not state['feature_cols']:
+        return jsonify({'error': 'No data. Complete Step 1 first.'}), 400
+
+    df_clean = state['df_clean']
+    feature_cols = state['feature_cols']
+    target_cols = state['target_cols']
+
+    heatmap_b64, high_corr_pairs = data_utils.get_correlation_heatmap_b64(
+        df_clean, feature_cols
+    )
+    feat_target_b64, nonlinear_hint_cols = data_utils.get_feat_target_grid_b64(
+        df_clean, feature_cols, target_cols
+    )
+
+    return jsonify({
+        'corr_heatmap_b64': heatmap_b64,
+        'feat_target_grid_b64': feat_target_b64,
+        'high_corr_pairs': high_corr_pairs,
+        'nonlinear_hint_cols': nonlinear_hint_cols,
+    })
+
+
+@main.route('/api/unusual_runs')
+def unusual_runs():
+    state = _state()
+    if state['df_clean'] is None or not state['feature_cols']:
+        return jsonify({'error': 'No data. Complete Step 1 first.'}), 400
+
+    doe_type = request.args.get('doe_type', 'grid')
+    df_clean = state['df_clean']
+    feature_cols = state['feature_cols']
+
+    plot_b64, top_runs = data_utils.get_unusual_runs_b64(df_clean, feature_cols)
+
+    doe_caveat = None
+    if doe_type == 'grid':
+        doe_caveat = (
+            'Structured grid: boundary and corner points often score higher than '
+            'interior points — this is expected in a full-factorial or parametric sweep. '
+            'Review flagged rows for setup errors before deciding to exclude.'
+        )
+
+    return jsonify({
+        'plot_b64': plot_b64,
+        'top_runs': top_runs,
+        'doe_caveat': doe_caveat,
     })

@@ -479,6 +479,22 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
 .exploration-chart { border:1px solid var(--border); border-radius:8px; overflow:hidden; margin-bottom:12px; }
 .exploration-chart-title { background:var(--panel); padding:6px 12px; font-size:12px; font-weight:600; color:var(--text-muted); border-bottom:1px solid var(--border); }
 .lc-caption { font-size:12px; color:var(--text-muted); padding:6px 12px 0; font-style:italic; }
+
+/* Data quality signal hierarchy */
+.alert-confirm { background:#e0f2fe; border-left:4px solid #0ea5e9; color:#075985; }
+.alert-prospective { background:#f5f3ff; border-left:4px dashed #7c3aed; color:#4c1d95; }
+/* Skewness / distribution badges */
+.skew-badge { display:inline-block; font-size:10px; font-weight:700; padding:1px 5px; border-radius:3px; }
+.skew-r2 { background:#fef9c3; color:#713f12; }
+.skew-r1 { background:#fef3c7; color:#92400e; }
+.skew-sym { background:#f0fdf4; color:#166534; }
+.skew-l1 { background:#e0f2fe; color:#0c4a6e; }
+.skew-l2 { background:#dbeafe; color:#1e40af; }
+/* Barely varies coverage badge */
+.barely-varies { display:inline-block; font-size:10px; padding:1px 5px; border-radius:3px; background:#fce7f3; color:#9d174d; font-weight:600; }
+/* Step 3 retrospective panel */
+.retro-panel { background:#faf5ff; border:1px solid #ddd6fe; border-radius:8px; padding:12px 16px; margin-bottom:16px; }
+.retro-panel .retro-title { font-size:11px; font-weight:700; color:#5b21b6; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.05em; }
 </style>
 </head>
 <body>
@@ -578,9 +594,17 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
           <button class="btn-help" onclick="toggleHelp('outlier-help')">?</button>
         </div>
         <div id="outlier-help" class="help-card" style="display:none;">
-          <p><strong>How it detects outliers:</strong> We measure the typical spread of each column using the interquartile range (IQR) — the gap between the 25th and 75th percentile values. Any data point more than 1.5× that gap above or below the middle is flagged.</p>
+          <p><strong>How it detects outliers:</strong> We measure the typical spread of each column using the interquartile range (IQR) — the gap between the 25th and 75th percentile values. Any data point more than the sensitivity multiplier × IQR above or below the middle bulk is flagged.</p>
+          <p><strong>Sensitivity multiplier:</strong> 1.5× (mild) catches moderate anomalies and is good for clean wind tunnel data. 3.0× (strict) flags only extreme outliers — better for CFD sweeps that intentionally include stall or transonic conditions where large CD values are physically real and should be kept.</p>
           <p><strong>Why it matters for your surrogate:</strong> A single anomalous CFD run — a diverged solution or transcription error — can pull the fitted model away from your real operating envelope, reducing accuracy across the entire design space.</p>
           <p><strong>When to exclude:</strong> Exclude if the flagged row represents a numerical error or physically impossible condition. Keep it if it is a real edge-case design point — but expect lower surrogate accuracy in that region.</p>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:8px;margin-bottom:4px;">
+          <label for="iqr-multiplier-select" style="font-size:12px;font-weight:600;color:#92400e;">Sensitivity:</label>
+          <select id="iqr-multiplier-select" onchange="onIqrMultiplierChange()" style="font-size:12px;padding:2px 6px;border-radius:4px;border:1px solid #f97316;background:#fffbeb;color:#92400e;">
+            <option value="1.5" selected>1.5× — Mild (default)</option>
+            <option value="3.0">3.0× — Strict (extreme only)</option>
+          </select>
         </div>
         <div id="outlier-details" style="margin-top:6px;font-size:12px;color:var(--text);"></div>
         <div style="margin-top:10px;">
@@ -593,6 +617,72 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
       </div>
 
       <div id="dataset-health-card" style="display:none;margin-top:12px;"></div>
+
+      <details id="data-explorer-section" style="display:none;margin-top:16px;">
+        <summary style="font-size:13px;font-weight:600;cursor:pointer;color:var(--accent);list-style:none;display:flex;align-items:center;gap:8px;padding:4px 0;">
+          <span>&#9658;</span> Explore Data Relationships — correlations, linearity &amp; unusual runs
+        </summary>
+        <div style="padding-top:14px;">
+          <div id="de-loading" class="alert alert-info" style="display:none;font-size:12px;">Analysing dataset…</div>
+          <div id="de-error" class="alert alert-error" style="display:none;font-size:12px;"></div>
+
+          <!-- F1: Correlation heatmap -->
+          <div style="margin-bottom:18px;">
+            <div style="font-size:12px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:6px;">
+              Input Correlations
+              <button class="btn-help" onclick="toggleHelp('help-de-corr')">?</button>
+            </div>
+            <div id="help-de-corr" class="help-card" style="display:none;margin-bottom:8px;">
+              <p><strong>What this shows:</strong> How strongly each pair of input features is correlated (Pearson r, −1 to +1). Red = strong positive correlation, blue = strong negative. 0 = no straight-line relationship (could still be nonlinear — check the scatter plots below).</p>
+              <p><strong>Why it matters:</strong> Redundant inputs make the model harder to interpret. Consider removing one — but only if both are not independently meaningful for the physics.</p>
+            </div>
+            <div id="de-corr-msg" style="display:none;margin-bottom:8px;"></div>
+            <img id="de-corr-img" src="" alt="Correlation heatmap" style="display:none;max-width:100%;border-radius:8px;">
+          </div>
+
+          <!-- F2: Feature-target scatter -->
+          <div style="margin-bottom:18px;">
+            <div style="font-size:12px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:6px;">
+              What Your Model Will Learn
+              <button class="btn-help" onclick="toggleHelp('help-de-ft')">?</button>
+            </div>
+            <div id="help-de-ft" class="help-card" style="display:none;margin-bottom:8px;">
+              <p><strong>What this shows:</strong> Each input plotted against each output with a linear trend line (red). Points that follow the line closely → Linear Regression will handle this well. Points that curve away from the line → the relationship is non-linear, and GPR or Random Forest will perform better.</p>
+              <p><strong>Wide scatter:</strong> Scatter around the line means noisy or complex data in that region. More CFD runs there would improve model accuracy.</p>
+            </div>
+            <div id="de-ft-msg" style="display:none;margin-bottom:8px;"></div>
+            <img id="de-ft-img" src="" alt="Feature-target scatter" style="display:none;max-width:100%;border-radius:8px;">
+          </div>
+
+          <!-- F4: Unusual run detector -->
+          <div style="margin-bottom:8px;">
+            <div style="font-size:12px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:6px;">
+              Unusual Run Detector
+              <button class="btn-help" onclick="toggleHelp('help-de-ur')">?</button>
+            </div>
+            <div id="help-de-ur" class="help-card" style="display:none;margin-bottom:8px;">
+              <p><strong>What this shows:</strong> Simulation runs that are unusual as a <em>combination</em> of inputs, not just extreme in one column. A run can look normal in every individual input but still be an unusual combination (e.g. high Mach at very low AoA when all other high-Mach runs are at moderate AoA).</p>
+              <p><strong>Score:</strong> 0 = very typical. 1 = most unusual. Red dots (score &gt; 0.6) are worth reviewing for possible setup errors or unexpected operating conditions.</p>
+              <p><strong>Structured grid note:</strong> In a full-factorial sweep, boundary and corner points are expected to score higher. The Design type selector shows the relevant caveat.</p>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
+              <label for="doe-type-select" style="font-size:12px;color:var(--text-muted);">Design type:</label>
+              <select id="doe-type-select" style="font-size:12px;padding:3px 8px;">
+                <option value="grid" selected>Structured grid (default — leave as is if unsure)</option>
+                <option value="lhs">Latin Hypercube / space-filling</option>
+                <option value="random">Random / unknown</option>
+              </select>
+              <button class="btn btn-secondary" onclick="runUnusualDetector()" style="font-size:12px;padding:5px 12px;">Run Detector</button>
+            </div>
+            <div id="de-ur-caveat" style="display:none;margin-bottom:8px;"></div>
+            <div id="de-ur-loading" style="display:none;font-size:12px;color:var(--text-muted);margin-bottom:6px;">Running analysis…</div>
+            <img id="de-ur-img" src="" alt="Unusual run detector" style="display:none;max-width:100%;border-radius:8px;">
+            <div id="de-ur-top" style="display:none;margin-top:8px;"></div>
+          </div>
+
+          <div id="de-prospective" style="display:none;margin-top:14px;"></div>
+        </div>
+      </details>
     </div>
 
     <div class="nav-row">
@@ -886,6 +976,9 @@ const appState = {
   currentStep: 1,
   featureMedians: {},
   explorationHistory: [],
+  iqrMultiplier: 1.5,
+  step1Flags: [],
+  nonlinearFeatures: [],
 };
 
 // ---------------------------------------------------------------------------
@@ -995,7 +1088,10 @@ async function handleFileUpload(file) {
 function renderSummaryTable(summary) {
   const cols = summary.columns;
   let html = '<div style="overflow-x:auto"><table class="data-table"><thead><tr>'
-    + '<th>Column</th><th>Type</th><th>Min</th><th>Max</th><th>Mean</th><th>Null Count</th>'
+    + '<th>Column</th><th>Type</th><th>Min</th><th>Max</th><th>Mean</th>'
+    + '<th title="Skewness: ▶▶ strong right · ▶ mild right · ● symmetric · ◀ mild left · ◀◀ strong left">Distribution</th>'
+    + '<th title="Coverage: flags inputs that barely change across your runs">Coverage</th>'
+    + '<th>Null Count</th>'
     + '</tr></thead><tbody>';
   for (const col of cols) {
     const dtype = summary.dtypes[col];
@@ -1007,6 +1103,8 @@ function renderSummaryTable(summary) {
       <td>${stats ? stats.min.toPrecision(5) : '—'}</td>
       <td>${stats ? stats.max.toPrecision(5) : '—'}</td>
       <td>${stats ? stats.mean.toPrecision(5) : '—'}</td>
+      <td style="text-align:center;">${stats ? distributionBadge(stats.skew) : '—'}</td>
+      <td>${stats ? coverageBadge(stats.cv) : ''}</td>
       <td style="color:${nulls > 0 ? 'var(--danger)' : 'var(--text-muted)'}">${nulls}</td>
     </tr>`;
   }
@@ -1074,7 +1172,7 @@ async function confirmColumns() {
     const res = await fetch('/api/set_columns', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ feature_cols: featureCols, target_cols: targetCols }),
+      body: JSON.stringify({ feature_cols: featureCols, target_cols: targetCols, iqr_multiplier: appState.iqrMultiplier }),
     });
     data = await res.json();
     if (!res.ok) { showError('column-error', data.error); btn.disabled = false; btn.textContent = 'Confirm Column Selection'; return; }
@@ -1121,6 +1219,25 @@ async function confirmColumns() {
   document.getElementById('step2-feature-count').textContent = appState.featureCols.length;
   document.getElementById('step2-dataset-summary').style.display = 'block';
   applyModelRecommendation(data.n_rows, appState.featureCols.length);
+
+  // Populate step1 data quality flags from selected column stats
+  populateStep1Flags();
+
+  // Show & reset the data explorer section
+  const deSec = document.getElementById('data-explorer-section');
+  if (deSec) {
+    deSec.style.display = 'block';
+    deSec.removeAttribute('open');
+  }
+  // Clear stale data explorer content
+  ['de-corr-img', 'de-ft-img', 'de-ur-img'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) { el.src = ''; el.style.display = 'none'; }
+  });
+  ['de-corr-msg', 'de-ft-msg', 'de-ur-caveat', 'de-ur-top', 'de-prospective'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1232,7 +1349,8 @@ function renderHistory(history, targetCols) {
 
 function renderResults(data) {
   const panel = document.getElementById('results-panel');
-  let html = renderModelHealth(data.results, data.target_cols);
+  let html = renderRetrospectivePanel();
+  html += renderModelHealth(data.results, data.target_cols);
 
   for (const target of data.target_cols) {
     const res = data.results[target];
@@ -1737,7 +1855,13 @@ function renderOutlierPanel(outlierInfo) {
   const detailsDiv = document.getElementById('outlier-details');
 
   if (!outlierInfo || Object.keys(outlierInfo).length === 0) {
-    panel.style.display = 'none';
+    if (appState.featureCols.length > 0) {
+      summaryText.textContent = 'No outliers detected at current sensitivity';
+      detailsDiv.innerHTML = '';
+      panel.style.display = 'block';
+    } else {
+      panel.style.display = 'none';
+    }
     return;
   }
 
@@ -1775,6 +1899,7 @@ async function toggleOutlierExclusion() {
         feature_cols: appState.featureCols,
         target_cols: appState.targetCols,
         exclude_outliers: exclude,
+        iqr_multiplier: appState.iqrMultiplier,
       }),
     });
     data = await res.json();
@@ -1810,6 +1935,51 @@ async function toggleOutlierExclusion() {
     el.textContent = `${data.n_dropped} row(s) removed (NaN + outliers). ${data.n_rows} rows remain for training.`;
     el.style.display = 'block';
   }
+}
+
+async function onIqrMultiplierChange() {
+  const val = parseFloat(document.getElementById('iqr-multiplier-select').value);
+  appState.iqrMultiplier = val;
+  if (!appState.featureCols.length || !appState.targetCols.length) return;
+
+  const btn = document.getElementById('confirm-columns-btn');
+  btn.disabled = true;
+
+  let data;
+  try {
+    const res = await fetch('/api/set_columns', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        feature_cols: appState.featureCols,
+        target_cols: appState.targetCols,
+        exclude_outliers: document.getElementById('exclude-outliers-cb').checked,
+        iqr_multiplier: appState.iqrMultiplier,
+      }),
+    });
+    data = await res.json();
+    if (!res.ok) { showError('column-error', data.error); btn.disabled = false; return; }
+  } catch (e) {
+    showError('column-error', 'Network error: ' + e.message);
+    btn.disabled = false;
+    return;
+  }
+
+  btn.disabled = false;
+  if (data.pairplot_b64) {
+    document.getElementById('pairplot-img').src = 'data:image/png;base64,' + data.pairplot_b64;
+  }
+  renderOutlierPanel(data.outlier_info);
+  const excludedInfoEl = document.getElementById('outlier-excluded-info');
+  if (document.getElementById('exclude-outliers-cb').checked && data.n_outliers_excluded > 0) {
+    excludedInfoEl.textContent = `✓ ${data.n_outliers_excluded} outlier row(s) excluded. Training data: ${data.n_rows} rows.`;
+    excludedInfoEl.style.display = 'block';
+  } else {
+    excludedInfoEl.style.display = 'none';
+  }
+  // restore multiplier select after renderOutlierPanel rebuilds the panel
+  const sel = document.getElementById('iqr-multiplier-select');
+  if (sel) sel.value = String(appState.iqrMultiplier);
 }
 
 // ---------------------------------------------------------------------------
@@ -1870,6 +2040,205 @@ function renderDatasetHealthCard(nRows, nFeatures) {
   }
   card.innerHTML = `<div class="alert ${cls}" style="margin-top:0;">${msg}</div>`;
   card.style.display = 'block';
+}
+
+// ---------------------------------------------------------------------------
+// Step 1 flags: F3 (skew) + F5 (barely varies) — populated after column confirm
+// ---------------------------------------------------------------------------
+function populateStep1Flags() {
+  appState.step1Flags = [];
+  appState.nonlinearFeatures = [];
+  if (!appState.summary) return;
+  const stats = appState.summary.stats;
+
+  // F5: barely varies feature (CV < 0.01)
+  for (const col of appState.featureCols) {
+    const s = stats[col];
+    if (s && s.cv < 0.01) {
+      appState.step1Flags.push({
+        type: 'warning',
+        label: `"${col}" barely varies across your runs (CV = ${s.cv.toFixed(4)})`,
+        detail: 'This input changes very little. It adds limited information to the surrogate and may increase noise. Consider removing it from the feature list unless it is physically significant.',
+      });
+    }
+  }
+
+  // F3: skewed target distribution (|skew| > 1.5)
+  for (const col of appState.targetCols) {
+    const s = stats[col];
+    if (s && Math.abs(s.skew) > 1.5) {
+      const dir = s.skew > 0 ? 'right (long tail toward high values)' : 'left (long tail toward low values)';
+      appState.step1Flags.push({
+        type: 'info',
+        label: `"${col}" has a skewed distribution (skew = ${s.skew.toFixed(2)}, ${dir})`,
+        detail: 'A skewed output can reduce model accuracy in the tail region. For drag (CD) near stall, right-skew is physically expected. If accurate predictions at extreme values matter, consider adding more CFD runs in those regions.',
+      });
+    }
+  }
+}
+
+// Distribution badge from skewness value
+function distributionBadge(skew) {
+  if (skew === undefined || skew === null || isNaN(skew)) return '—';
+  const abs = Math.abs(skew);
+  if (abs >= 2) return `<span class="skew-badge ${skew > 0 ? 'skew-r2' : 'skew-l2'}" title="Skewness ${skew.toFixed(2)}">${skew > 0 ? '▶▶' : '◀◀'}</span>`;
+  if (abs >= 1) return `<span class="skew-badge ${skew > 0 ? 'skew-r1' : 'skew-l1'}" title="Skewness ${skew.toFixed(2)}">${skew > 0 ? '▶' : '◀'}</span>`;
+  return `<span class="skew-badge skew-sym" title="Skewness ${skew.toFixed(2)}">●</span>`;
+}
+
+// Coverage badge from coefficient of variation
+function coverageBadge(cv) {
+  if (cv === undefined || cv === null || isNaN(cv) || cv >= 0.01) return '';
+  return `<span class="barely-varies" title="CV = ${cv.toFixed(4)} — this column barely changes">barely varies</span>`;
+}
+
+// ---------------------------------------------------------------------------
+// Data Explorer: F1 (correlation heatmap) + F2 (feature-target scatter)
+// ---------------------------------------------------------------------------
+async function loadDataExplorer() {
+  const loadEl = document.getElementById('de-loading');
+  if (loadEl && loadEl.style.display === 'block') return; // already loading
+  if (loadEl) loadEl.style.display = 'block';
+  const errEl = document.getElementById('de-error');
+  if (errEl) errEl.style.display = 'none';
+
+  let data;
+  try {
+    const res = await fetch('/api/data_explorer');
+    data = await res.json();
+    if (!res.ok) {
+      if (loadEl) loadEl.style.display = 'none';
+      if (errEl) { errEl.textContent = data.error; errEl.style.display = 'block'; }
+      return;
+    }
+  } catch (e) {
+    if (loadEl) loadEl.style.display = 'none';
+    if (errEl) { errEl.textContent = 'Network error: ' + e.message; errEl.style.display = 'block'; }
+    return;
+  }
+
+  if (loadEl) loadEl.style.display = 'none';
+
+  // F1: Correlation heatmap
+  const corrImg = document.getElementById('de-corr-img');
+  const corrMsg = document.getElementById('de-corr-msg');
+  if (data.corr_heatmap_b64 && corrImg) {
+    corrImg.src = 'data:image/png;base64,' + data.corr_heatmap_b64;
+    corrImg.style.display = 'block';
+  }
+  if (data.high_corr_pairs && data.high_corr_pairs.length > 0 && corrMsg) {
+    const pairs = data.high_corr_pairs.map(p =>
+      `<strong>${escHtml(p.col_a)}</strong> ↔ <strong>${escHtml(p.col_b)}</strong> (r = ${p.r})`
+    ).join(' · ');
+    corrMsg.innerHTML = `<div class="alert alert-warning" style="margin:0;font-size:12px;">⚠ High correlation: ${pairs}. Consider removing one — but only if both are not independently physically meaningful.</div>`;
+    corrMsg.style.display = 'block';
+    // Bridge to step1Flags
+    for (const p of data.high_corr_pairs) {
+      const alreadyFlagged = appState.step1Flags.some(f => f.label.includes(p.col_a) && f.label.includes(p.col_b));
+      if (!alreadyFlagged) {
+        appState.step1Flags.push({
+          type: 'warning',
+          label: `"${p.col_a}" and "${p.col_b}" are highly correlated (r = ${p.r})`,
+          detail: 'Redundant inputs make the model harder to interpret. Consider removing one — but only if both are not independently physically meaningful.',
+        });
+      }
+    }
+  }
+
+  // F2: Feature-target scatter
+  const ftImg = document.getElementById('de-ft-img');
+  const ftMsg = document.getElementById('de-ft-msg');
+  if (data.feat_target_grid_b64 && ftImg) {
+    ftImg.src = 'data:image/png;base64,' + data.feat_target_grid_b64;
+    ftImg.style.display = 'block';
+  }
+  if (data.nonlinear_hint_cols && data.nonlinear_hint_cols.length > 0 && ftMsg) {
+    appState.nonlinearFeatures = data.nonlinear_hint_cols;
+    const colNames = data.nonlinear_hint_cols.map(c => `<strong>${escHtml(c)}</strong>`).join(', ');
+    ftMsg.innerHTML = `<div class="alert alert-prospective" style="margin:0;font-size:12px;">◆ Non-linear relationship detected for: ${colNames}. GPR or Random Forest will likely outperform Linear Regression on this data.</div>`;
+    ftMsg.style.display = 'block';
+  }
+
+  // Prospective summary hint
+  const prospEl = document.getElementById('de-prospective');
+  const totalFlags = appState.step1Flags.length;
+  if (prospEl && totalFlags > 0) {
+    prospEl.innerHTML = `<div class="alert alert-prospective" style="font-size:12px;">◆ ${totalFlags} data quality signal${totalFlags > 1 ? 's' : ''} found — these will be shown again in Step 3 alongside your model results so you can compare.</div>`;
+    prospEl.style.display = 'block';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Unusual Run Detector (F4)
+// ---------------------------------------------------------------------------
+async function runUnusualDetector() {
+  const doeType = (document.getElementById('doe-type-select') || {}).value || 'grid';
+  const loadEl  = document.getElementById('de-ur-loading');
+  const imgEl   = document.getElementById('de-ur-img');
+  const topEl   = document.getElementById('de-ur-top');
+  const cavEl   = document.getElementById('de-ur-caveat');
+
+  if (loadEl) loadEl.style.display = 'block';
+  if (imgEl)  imgEl.style.display  = 'none';
+  if (topEl)  topEl.style.display  = 'none';
+  if (cavEl)  cavEl.style.display  = 'none';
+
+  let data;
+  try {
+    const res = await fetch(`/api/unusual_runs?doe_type=${encodeURIComponent(doeType)}`);
+    data = await res.json();
+    if (!res.ok) {
+      if (loadEl) loadEl.style.display = 'none';
+      alert(data.error || 'Unusual run detection failed.');
+      return;
+    }
+  } catch (e) {
+    if (loadEl) loadEl.style.display = 'none';
+    alert('Network error: ' + e.message);
+    return;
+  }
+
+  if (loadEl) loadEl.style.display = 'none';
+
+  if (data.doe_caveat && cavEl) {
+    cavEl.innerHTML = `<div class="alert alert-info" style="margin:0;font-size:12px;">${escHtml(data.doe_caveat)}</div>`;
+    cavEl.style.display = 'block';
+  }
+  if (data.plot_b64 && imgEl) {
+    imgEl.src = 'data:image/png;base64,' + data.plot_b64;
+    imgEl.style.display = 'block';
+  }
+  if (data.top_runs && data.top_runs.length > 0 && topEl) {
+    const highRuns = data.top_runs.filter(r => r.score > 0.6);
+    if (highRuns.length > 0) {
+      const runList = highRuns.map(r => `Row ${r.row_idx} (score: ${r.score})`).join(' · ');
+      topEl.innerHTML = `<div class="alert alert-warning" style="margin:0;font-size:12px;">⚠ Rows worth reviewing: ${escHtml(runList)}</div>`;
+      topEl.style.display = 'block';
+    } else {
+      topEl.innerHTML = `<div class="alert alert-success" style="margin:0;font-size:12px;">✓ No runs scored above the review threshold (0.6). Dataset looks internally consistent.</div>`;
+      topEl.style.display = 'block';
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Step 3 retrospective panel
+// ---------------------------------------------------------------------------
+function renderRetrospectivePanel() {
+  const flags = appState.step1Flags;
+  if (!flags || flags.length === 0) return '';
+  const items = flags.map(f => {
+    const icon = f.type === 'warning' ? '⚠' : f.type === 'error' ? '✗' : '◆';
+    return `<div style="margin-bottom:6px;">
+      <strong>${icon} ${escHtml(f.label)}</strong>
+      <div style="color:var(--text-muted);font-size:11px;margin-top:1px;">${escHtml(f.detail)}</div>
+    </div>`;
+  }).join('');
+  return `<div class="retro-panel">
+    <div class="retro-title">Step 1 Data Quality Signals</div>
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">These signals were detected before training — compare them to the fit results below.</div>
+    <div style="font-size:12px;">${items}</div>
+  </div>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -2094,6 +2463,16 @@ function downloadExplorationHistory() {
   a.download = 'exploration_history.csv';
   a.click();
 }
+
+// Data Explorer lazy load on <details> open
+(function () {
+  const deSection = document.getElementById('data-explorer-section');
+  if (deSection) {
+    deSection.addEventListener('toggle', function () {
+      if (this.open) loadDataExplorer();
+    });
+  }
+}());
 </script>
 </body>
 </html>
