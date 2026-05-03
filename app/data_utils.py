@@ -6,6 +6,11 @@ import numpy as np
 import pandas as pd
 from pandas.plotting import scatter_matrix
 
+SCATTER_MAX_POINTS = 500
+PAIRPLOT_MAX_COLS = 8
+CORR_THRESHOLD = 0.92
+CORR_MIN_PERIODS = 10
+
 
 def validate_and_load_csv(filepath):
     """Load CSV and validate it has at least 2 numeric columns.
@@ -117,19 +122,21 @@ def get_outlier_flags(df, cols, multiplier=1.5):
     return flags
 
 
-def get_pairplot_b64(df, columns, max_cols=8, outlier_df=None):
+def get_pairplot_b64(df, columns, max_cols=PAIRPLOT_MAX_COLS, outlier_df=None):
     """Render a scatter matrix for up to max_cols numeric columns.
 
     outlier_df: optional DataFrame of outlier rows to overlay as hollow orange
     circles on every off-diagonal subplot (shown regardless of exclusion state).
 
-    Returns a base64-encoded PNG string, or '' if fewer than 2 numeric cols.
+    Returns (b64, n_shown, n_total) — n_total is len(columns) before truncation.
+    Returns ('', 0, 0) if fewer than 2 numeric cols.
     """
+    n_total = len(columns)
     cols_to_plot = columns[:max_cols]
     df_plot = df[cols_to_plot].select_dtypes(include=[np.number])
 
     if len(df_plot.columns) < 2:
-        return ''
+        return '', 0, 0
 
     plot_cols = df_plot.columns.tolist()
     fig, axes = plt.subplots(
@@ -164,7 +171,8 @@ def get_pairplot_b64(df, columns, max_cols=8, outlier_df=None):
     fig.savefig(buf, format='png', dpi=100, bbox_inches='tight')
     plt.close(fig)
     buf.seek(0)
-    return base64.b64encode(buf.read()).decode('utf-8')
+    n_shown = len(df_plot.columns)
+    return base64.b64encode(buf.read()).decode('utf-8'), n_shown, n_total
 
 
 def get_correlation_heatmap_b64(df, feature_cols, threshold=0.92):
@@ -179,7 +187,7 @@ def get_correlation_heatmap_b64(df, feature_cols, threshold=0.92):
     if len(cols) < 2:
         return '', []
 
-    corr = df[cols].corr()
+    corr = df[cols].corr(min_periods=CORR_MIN_PERIODS)
     n = len(cols)
     fig_size = max(4.0, n * 1.1)
     fig, ax = plt.subplots(figsize=(fig_size, fig_size * 0.85))
@@ -260,6 +268,9 @@ def get_feat_target_grid_b64(df, feature_cols, target_cols, max_feat_cols=3):
                     r2_lin = 1.0 - ss_res / ss_tot if ss_tot > 1e-12 else 1.0
                     if r2_lin < 0.7 and feat not in nonlinear_hint_cols:
                         nonlinear_hint_cols.append(feat)
+                    ax.text(0.05, 0.92, f'R²={r2_lin:.2f}',
+                            transform=ax.transAxes, fontsize=7, color='#374151',
+                            va='top')
                 except Exception:
                     pass
 
@@ -320,7 +331,7 @@ def get_unusual_runs_b64(df, feature_cols, top_n=10):
     X = df_vals.values
     original_idx = df_vals.index.tolist()
 
-    contamination = max(0.05, min(0.1, 5 / len(df_vals)))
+    contamination = max(0.01, min(0.1, 5 / len(df_vals)))
     clf = IsolationForest(contamination=contamination, random_state=42, n_estimators=100)
     clf.fit(X)
     raw_scores = clf.score_samples(X)
@@ -330,6 +341,8 @@ def get_unusual_runs_b64(df, feature_cols, top_n=10):
     else:
         normalized = 1.0 - (raw_scores - s_min) / (s_max - s_min)
 
+    # Adaptive top-N: scale with dataset size, cap at 10
+    top_n = min(10, max(3, len(df_vals) // 10))
     n_show = min(top_n, len(df_vals))
     idx_sorted = np.argsort(normalized)[-n_show:]
     scores_sorted = normalized[idx_sorted]
@@ -414,7 +427,7 @@ def get_scatter_plot_b64(df, x_col, y_col, filters=None,
         return '', 0, 0, 0, None
 
     if n_filtered > max_points:
-        df_work = df_work.sample(n=max_points, random_state=42)
+        df_work = df_work.sample(n=max_points, random_state=None)
     n_plotted = len(df_work)
 
     x_vals = df_work[x_col].values.astype(float)

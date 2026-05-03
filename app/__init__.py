@@ -1,4 +1,7 @@
+import logging
 import os
+from logging.handlers import RotatingFileHandler
+
 import matplotlib
 matplotlib.use('Agg')  # must be set before any other matplotlib import
 
@@ -30,6 +33,7 @@ def _initial_state():
         'results': {},
         'last_predictions': None,
         'train_history': [],
+        'training_in_progress': False,
         'de_corr_b64': None,
         'de_corr_pairs': None,
         'de_ft_b64': None,
@@ -49,6 +53,13 @@ def create_app():
 
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
     os.makedirs(app.config['MODELS_FOLDER'], exist_ok=True)
+
+    log_path = os.path.join(base_dir, 'surrogate_tool.log')
+    handler = RotatingFileHandler(log_path, maxBytes=1_000_000, backupCount=2)
+    handler.setLevel(logging.INFO)
+    handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(name)s: %(message)s'))
+    app.logger.addHandler(handler)
+    app.logger.setLevel(logging.INFO)
 
     from app.routes import main
     app.register_blueprint(main)

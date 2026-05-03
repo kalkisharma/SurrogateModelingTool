@@ -31,7 +31,7 @@ body {
 }
 
 #app-wrapper {
-  max-width: 1100px;
+  max-width: 1240px;
   margin: 0 auto;
   padding: 24px 20px 48px;
 }
@@ -506,24 +506,24 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
   </header>
 
   <div id="progress-bar">
-    <div class="step-indicator active" data-step="1">
+    <div class="step-indicator active" data-step="1" data-base-label="Data Explorer" onclick="goToStep(1)" style="cursor:pointer;" title="Go to Step 1">
       <span class="step-num">1</span>Data Explorer
     </div>
-    <div class="step-indicator" data-step="2">
+    <div class="step-indicator" data-step="2" data-base-label="Configure" onclick="goToStep(2)" style="cursor:pointer;" title="Go to Step 2">
       <span class="step-num">2</span>Configure
     </div>
-    <div class="step-indicator" data-step="3">
+    <div class="step-indicator" data-step="3" data-base-label="Train &amp; Validate" onclick="goToStep(3)" style="cursor:pointer;" title="Go to Step 3">
       <span class="step-num">3</span>Train &amp; Validate
     </div>
-    <div class="step-indicator" data-step="4">
+    <div class="step-indicator" data-step="4" data-base-label="Predict &amp; Export" onclick="goToStep(4)" style="cursor:pointer;" title="Go to Step 4">
       <span class="step-num">4</span>Predict &amp; Export
     </div>
   </div>
 
   <!-- Onboarding explainer -->
   <div class="panel" style="margin-bottom:20px;">
-    <details>
-      <summary style="font-size:14px;font-weight:600;cursor:pointer;color:var(--accent);list-style:none;display:flex;align-items:center;gap:8px;">
+    <details id="onboarding-details">
+      <summary style="font-size:14px;font-weight:600;cursor:pointer;color:var(--accent);list-style:none;display:flex;align-items:center;gap:8px;" onclick="localStorage.setItem('seen_onboarding','1')">
         <span>&#9658;</span> What is a surrogate model? — click to learn before you start
       </summary>
       <div style="padding-top:14px;font-size:13px;line-height:1.8;color:var(--text);">
@@ -743,8 +743,8 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
           <div id="de-ur-loading" style="display:none;font-size:12px;color:var(--text-muted);margin-bottom:6px;">Running analysis…</div>
           <img id="de-ur-img" src="" alt="Unusual run detector" style="display:none;max-width:100%;border-radius:8px;">
           <div id="de-ur-legend" style="display:none;font-size:11px;color:var(--text-muted);margin-top:4px;">
-            <span style="color:#dc2626;">●</span> Review (&gt;0.6) &nbsp;&nbsp;
-            <span style="color:#f97316;">●</span> Monitor (0.4–0.6) &nbsp;&nbsp;
+            <span style="color:#dc2626;">◆</span> Review (&gt;0.6) &nbsp;&nbsp;
+            <span style="color:#f97316;">■</span> Monitor (0.4–0.6) &nbsp;&nbsp;
             <span style="color:#2563EB;">●</span> Typical (≤0.4)
           </div>
           <div id="de-ur-top" style="display:none;margin-top:8px;"></div>
@@ -838,6 +838,18 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
           <option value="gpr">Gaussian Process Regression (GPR) — most accurate on small datasets, gives uncertainty estimates</option>
           <option value="rf">Random Forest — best for medium-to-large datasets, robust to outliers</option>
         </select>
+
+        <div style="margin-top:10px;">
+          <button type="button" id="advanced-mode-toggle" onclick="toggleAdvancedModelMode()" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:12px;color:var(--text-muted);cursor:pointer;">
+            ⚙ Advanced: use a different model for each output
+          </button>
+        </div>
+
+        <div id="per-target-model-panel" style="display:none;margin-top:12px;padding:12px;background:#f1f5f9;border:1px solid var(--border);border-radius:8px;">
+          <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:8px;">Model per output</div>
+          <div id="per-target-rows"></div>
+          <p style="font-size:11px;color:var(--text-muted);margin-top:8px;">GPR and RF hyperparameters below apply to all outputs using that model type.</p>
+        </div>
       </div>
 
       <div id="gpr-panel" style="display:none">
@@ -898,8 +910,9 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
           <p>20% is a good default (e.g. 77 training / 19 test from 96 runs). Use 10–15% if you have fewer than 40 runs — you need enough training data for the model to learn the response surface.</p>
         </div>
         <div style="display:flex;align-items:center;gap:12px;">
-          <input type="range" id="test-size" min="10" max="40" value="20" step="5" oninput="document.getElementById('test-size-display').textContent=this.value+'%';updateTestSizeWarning(parseInt(this.value))">
+          <input type="range" id="test-size" min="10" max="40" value="20" step="5" oninput="document.getElementById('test-size-display').textContent=this.value+'%';updateTestSizeWarning(parseInt(this.value));updateSplitRowCounts(parseInt(this.value))">
           <span>Test: <strong id="test-size-display">20%</strong></span>
+          <span id="split-row-counts" style="font-size:11px;color:var(--text-muted);margin-left:8px;"></span>
         </div>
         <div id="test-size-warning" style="display:none;margin-top:6px;padding:6px 10px;background:var(--warning-bg);border:1px solid var(--warning-border);border-radius:6px;font-size:12px;color:#92400e;"></div>
       </div>
@@ -947,6 +960,7 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
       <div class="panel-title">Training &amp; Validation</div>
       <div id="train-error" class="alert alert-error" style="display:none;"></div>
       <div id="gpr-warning-banner" class="alert alert-warning" style="display:none;"></div>
+      <div id="train-time-warning" class="alert alert-warning" style="display:none;font-size:12px;"></div>
       <button class="btn btn-primary" id="train-btn" onclick="runTraining()" style="font-size:14px;padding:10px 24px;">
         ▶ Train Model
       </button>
@@ -957,7 +971,7 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
     </div>
 
     <div id="history-panel" style="display:none" class="panel">
-      <div class="panel-title">Training History (last 3 runs)</div>
+      <div class="panel-title">Training History (last 10 runs)</div>
       <div id="history-table-wrapper"></div>
     </div>
 
@@ -985,8 +999,8 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
            class="btn btn-secondary btn-download" style="display:none;">
           ⬇ Download Predictions CSV
         </a>
-        <a href="/api/download/config" download
-           class="btn btn-secondary btn-download">
+        <a id="download-config-link" href="/api/download/config" download
+           class="btn btn-secondary btn-download" style="display:none;">
           ⬇ Export Config JSON
         </a>
       </div>
@@ -1050,6 +1064,14 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
 
 <script>
 // ---------------------------------------------------------------------------
+// Q45: Open onboarding on first visit; persist with localStorage
+// ---------------------------------------------------------------------------
+document.addEventListener('DOMContentLoaded', () => {
+  const od = document.getElementById('onboarding-details');
+  if (od && !localStorage.getItem('seen_onboarding')) od.setAttribute('open', '');
+});
+
+// ---------------------------------------------------------------------------
 // Global state
 // ---------------------------------------------------------------------------
 const appState = {
@@ -1065,6 +1087,8 @@ const appState = {
   step1Flags: [],
   nonlinearFeatures: [],
   recommendedModel: null,
+  recommendationApplied: {},  // {target: bool} — true if recommendation was auto-applied
+  advancedModelMode: false,
   unusualScores: {},
 };
 
@@ -1087,27 +1111,49 @@ function goToStep(n) {
     showStepError(msgs[n] || 'Complete the previous step first.');
     return;
   }
+  // Mark completed steps with checkmark
+  const completedSteps = new Set();
+  if (appState.featureCols.length > 0) { completedSteps.add(1); completedSteps.add(2); }
+  if (appState.trained) { completedSteps.add(3); }
+
   document.querySelectorAll('.step-panel').forEach(p => p.classList.remove('active'));
   document.getElementById(`step-${n}`).classList.add('active');
   document.querySelectorAll('.step-indicator').forEach(ind => {
     const s = parseInt(ind.dataset.step);
     ind.classList.toggle('active', s === n);
     ind.classList.toggle('done', s < n);
+    // Checkmarks for completed steps
+    const baseLabel = ind.dataset.baseLabel || ind.dataset.label || ind.textContent.replace(' ✓', '').trim();
+    ind.dataset.baseLabel = baseLabel;
+    ind.textContent = completedSteps.has(s) && s !== n ? baseLabel + ' ✓' : baseLabel;
   });
   appState.currentStep = n;
   clearError('train-error');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 function showStepError(msg) {
   const errEl = document.getElementById(`step${appState.currentStep}-error`) ||
                 document.getElementById('train-error');
   if (errEl) { errEl.textContent = msg; errEl.style.display = 'block'; }
-  else alert(msg);
+  else console.warn('Step error (no container):', msg);
 }
 
 function showError(elId, msg) {
   const el = document.getElementById(elId);
   if (el) { el.textContent = msg; el.style.display = 'block'; }
+}
+function showInlineMsg(elId, msg, type) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  el.textContent = msg;
+  el.className = type === 'error' ? 'alert alert-error'
+    : type === 'warning' ? 'alert alert-warning' : 'alert alert-success';
+  el.style.display = 'block';
+  if (type === 'error') setTimeout(() => { if (el.textContent === msg) el.style.display = 'none'; }, 5000);
+}
+function showInlineError(containerId, msg) {
+  showInlineMsg(containerId, msg, 'error');
 }
 function clearError(elId) {
   const el = document.getElementById(elId);
@@ -1172,6 +1218,17 @@ async function handleFileUpload(file) {
 
   document.getElementById('summary-panel').style.display = 'block';
   document.getElementById('column-selection-panel').style.display = 'block';
+
+  // Show row-count warning from server if large dataset
+  if (data.row_count_warning) {
+    showInlineMsg('upload-quality-msg', data.row_count_warning, 'warning');
+  }
+
+  // Q14: auto-navigate to column selection area (smooth scroll to summary)
+  setTimeout(() => {
+    const sp = document.getElementById('summary-panel');
+    if (sp) sp.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, 100);
 }
 
 function renderSummaryTable(summary) {
@@ -1287,10 +1344,11 @@ async function confirmColumns() {
   const pairplotPanel = document.getElementById('pairplot-panel');
   if (data.pairplot_b64) {
     document.getElementById('pairplot-img').src = 'data:image/png;base64,' + data.pairplot_b64;
-    const totalCols = featureCols.length + targetCols.length;
-    if (totalCols > 8) {
+    const nShown = data.pairplot_n_shown || 0;
+    const nTotal = data.pairplot_n_total || 0;
+    if (nTotal > 8) {
       const noteEl = document.getElementById('pairplot-note');
-      noteEl.textContent = `Showing first 8 of ${totalCols} selected columns in the scatter matrix.`;
+      noteEl.textContent = `Showing ${nShown} of ${nTotal} selected columns. Use Data Explorer F2 for full coverage.`;
       noteEl.style.display = 'block';
     }
     pairplotPanel.style.display = 'block';
@@ -1344,6 +1402,12 @@ async function confirmColumns() {
     Array.from(scColor.options).forEach(o => { if (o.value === 'unusual' || o.disabled) scColor.removeChild(o); });
     scColor.value = '';
   }
+
+  // Q22: auto-fetch Data Explorer silently after column confirm
+  setTimeout(() => {
+    const deSec = document.getElementById('data-explorer-section');
+    if (deSec) loadDataExplorer();
+  }, 200);
 }
 
 // ---------------------------------------------------------------------------
@@ -1372,15 +1436,90 @@ function onModelTypeChange() {
   }
 
   // I3: Update recommendation banner when engineer overrides the recommendation
-  if (appState.recommendedModel && val !== appState.recommendedModel.model) {
-    const banner = document.getElementById('model-recommendation-banner');
+  const banner = document.getElementById('model-recommendation-banner');
+  if (appState.recommendedModel && val !== appState.recommendedModel.model && banner) {
     const nameEl = document.getElementById('rec-model-name');
     const reasonEl = document.getElementById('rec-reason');
-    if (banner && nameEl && reasonEl) {
-      nameEl.textContent = val === 'linear' ? 'Linear Regression' : val === 'gpr' ? 'Gaussian Process Regression (GPR)' : 'Random Forest';
-      reasonEl.textContent = `You selected this manually. Original recommendation was ${appState.recommendedModel.name} — ${appState.recommendedModel.reason}`;
-    }
+    const prefixEl = banner.querySelector('strong');
+    if (prefixEl) prefixEl.textContent = 'Your selection:';
+    if (nameEl) nameEl.textContent = val === 'linear' ? 'Linear Regression' : val === 'gpr' ? 'Gaussian Process Regression (GPR)' : 'Random Forest';
+    if (reasonEl) reasonEl.textContent = `You selected this manually. Original recommendation was ${appState.recommendedModel.name} — ${appState.recommendedModel.reason}`;
   }
+}
+
+function toggleAdvancedModelMode() {
+  appState.advancedModelMode = !appState.advancedModelMode;
+  const panel = document.getElementById('per-target-model-panel');
+  const btn = document.getElementById('advanced-mode-toggle');
+  if (appState.advancedModelMode) {
+    populatePerTargetRows();
+    panel.style.display = 'block';
+    btn.textContent = '✕ Close advanced mode';
+    btn.style.color = 'var(--accent)';
+  } else {
+    panel.style.display = 'none';
+    btn.textContent = '⚙ Advanced: use a different model for each output';
+    btn.style.color = 'var(--text-muted)';
+    // Revert shared panels to global model-type select
+    onModelTypeChange();
+  }
+}
+
+function populatePerTargetRows() {
+  const container = document.getElementById('per-target-rows');
+  if (!container) return;
+  const targets = appState.targetCols;
+  const nRows = appState.summary ? appState.summary.shape[0] : 0;
+  const nFeatures = appState.featureCols.length;
+  const defaultRec = recommendModel(nRows, nFeatures);
+  let html = '';
+  for (const t of targets) {
+    const recModel = defaultRec.model;
+    html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+      <span style="min-width:120px;font-size:13px;font-weight:600;">${escHtml(t)}</span>
+      <select id="pt-model-${escHtml(t)}" style="flex:1;" onchange="onPerTargetModelChange('${escHtml(t)}')">
+        <option value="linear"${recModel==='linear'?' selected':''}>Linear Regression</option>
+        <option value="gpr"${recModel==='gpr'?' selected':''}>GPR</option>
+        <option value="rf"${recModel==='rf'?' selected':''}>Random Forest</option>
+      </select>
+      <span id="pt-rec-badge-${escHtml(t)}" style="font-size:11px;color:#16a34a;">★ recommended</span>
+    </div>`;
+    appState.recommendationApplied[t] = true;
+  }
+  container.innerHTML = html;
+  updateSharedPanels();
+}
+
+function onPerTargetModelChange(target) {
+  appState.recommendationApplied[target] = false;
+  const badge = document.getElementById(`pt-rec-badge-${target}`);
+  if (badge) { badge.textContent = '(manual)'; badge.style.color = 'var(--text-muted)'; }
+  updateSharedPanels();
+}
+
+function updateSharedPanels() {
+  if (!appState.advancedModelMode) return;
+  const targets = appState.targetCols;
+  const usesGpr = targets.some(t => {
+    const sel = document.getElementById(`pt-model-${t}`);
+    return sel && sel.value === 'gpr';
+  });
+  const usesRf = targets.some(t => {
+    const sel = document.getElementById(`pt-model-${t}`);
+    return sel && sel.value === 'rf';
+  });
+  document.getElementById('gpr-panel').style.display = usesGpr ? 'block' : 'none';
+  document.getElementById('rf-panel').style.display = usesRf ? 'block' : 'none';
+}
+
+function getPerTargetConfig() {
+  if (!appState.advancedModelMode) return null;
+  const cfg = {};
+  for (const t of appState.targetCols) {
+    const sel = document.getElementById(`pt-model-${t}`);
+    if (sel) cfg[t] = { model_type: sel.value };
+  }
+  return cfg;
 }
 
 // ---------------------------------------------------------------------------
@@ -1394,6 +1533,20 @@ async function runTraining() {
   document.getElementById('loading-spinner').style.display = 'block';
   document.getElementById('step3-next-btn').disabled = true;
 
+  // Q35: training time warning for RF/Linear on large datasets
+  const nRows = appState.summary ? appState.summary.shape[0] : 0;
+  const modelSel = document.getElementById('model-type').value;
+  const timeWarnEl = document.getElementById('train-time-warning');
+  if (timeWarnEl) {
+    const showWarn = (modelSel === 'rf' && nRows > 500) || (modelSel === 'linear' && nRows > 1000);
+    if (showWarn) {
+      timeWarnEl.textContent = `Large dataset (${nRows} rows) — training may take 10–30 seconds. Please wait.`;
+      timeWarnEl.style.display = 'block';
+    } else {
+      timeWarnEl.style.display = 'none';
+    }
+  }
+
   const config = {
     model_type: document.getElementById('model-type').value,
     kernel_type: document.getElementById('kernel-type').value,
@@ -1405,6 +1558,7 @@ async function runTraining() {
     normalize: document.getElementById('normalize').checked,
     max_depth: parseInt(document.getElementById('rf-max-depth').value) || 0,
     min_samples_leaf: parseInt(document.getElementById('rf-min-samples').value) || 1,
+    per_target_config: getPerTargetConfig(),
   };
 
   let data;
@@ -1430,6 +1584,7 @@ async function runTraining() {
 
   document.getElementById('loading-spinner').style.display = 'none';
   document.getElementById('train-btn').disabled = false;
+  if (timeWarnEl) timeWarnEl.style.display = 'none';
 
   if (data.gpr_warning) {
     const banner = document.getElementById('gpr-warning-banner');
@@ -1438,8 +1593,11 @@ async function runTraining() {
   }
 
   appState.modelType = data.model_type;
+  appState.perTargetConfigUsed = data.per_target_config_used || {};
   appState.trained = true;
   appState.featureMedians = data.feature_medians || {};
+  const cfgLink = document.getElementById('download-config-link');
+  if (cfgLink) cfgLink.style.display = 'inline-block';
 
   renderHistory(data.train_history, data.target_cols);
   renderResults(data);
@@ -1451,7 +1609,16 @@ function renderHistory(history, targetCols) {
   const panel = document.getElementById('history-panel');
   const wrapper = document.getElementById('history-table-wrapper');
 
-  // Build header columns for each target
+  // Find best R² per target column for highlighting (Q48)
+  const bestR2 = {};
+  for (const t of targetCols) {
+    bestR2[t] = -Infinity;
+    for (const entry of history) {
+      const r2 = entry.metrics && entry.metrics[t] ? entry.metrics[t].r2_test : null;
+      if (typeof r2 === 'number' && r2 > bestR2[t]) bestR2[t] = r2;
+    }
+  }
+
   const targetHeaders = targetCols.map(t => `<th>R² ${escHtml(t)}</th>`).join('');
   let html = `<table class="history-table"><thead><tr>
     <th>Run</th><th>Model</th><th>Kernel</th><th>Time</th>${targetHeaders}
@@ -1465,7 +1632,9 @@ function renderHistory(history, targetCols) {
                        entry.model_type === 'rf'  ? 'Random Forest' : 'Linear';
     const targetCells = targetCols.map(t => {
       const r2 = entry.metrics && entry.metrics[t] ? entry.metrics[t].r2_test : '—';
-      return `<td>${typeof r2 === 'number' ? r2.toFixed(4) : r2}</td>`;
+      const isBest = typeof r2 === 'number' && r2 === bestR2[t] && history.length > 1;
+      const cellStyle = isBest ? ' style="font-weight:700;background:#dcfce7;"' : '';
+      return `<td${cellStyle}>${typeof r2 === 'number' ? r2.toFixed(4) : r2}${isBest ? ' ★' : ''}</td>`;
     }).join('');
     html += `<tr class="${rowClass}">
       <td>${label}</td>
@@ -1477,8 +1646,45 @@ function renderHistory(history, targetCols) {
   });
 
   html += '</tbody></table>';
+
+  // Q34: add download comparison button + legend
+  const csvRows = ['Run,Model,Kernel,Time,' + targetCols.join(',')];
+  history.forEach((entry, idx) => {
+    const modelLabel = entry.model_type === 'gpr' ? 'GPR' : entry.model_type === 'rf' ? 'RF' : 'Linear';
+    const r2Vals = targetCols.map(t => entry.metrics && entry.metrics[t] ? entry.metrics[t].r2_test.toFixed(4) : '');
+    csvRows.push([idx + 1, modelLabel, entry.kernel_type || '—', entry.timestamp || '', ...r2Vals].join(','));
+  });
+  html += `<div style="margin-top:8px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">`;
+  if (history.length > 1) html += `<span style="font-size:11px;color:var(--text-muted);">★ = best R² for that output</span>`;
+  html += `<a href="data:text/csv;charset=utf-8,${encodeURIComponent(csvRows.join('\n'))}" download="training_comparison.csv" style="font-size:12px;color:var(--accent);text-decoration:none;">⬇ Download comparison</a></div>`;
+
   wrapper.innerHTML = html;
   panel.style.display = 'block';
+}
+
+function modelTypeBadge(mt) {
+  if (mt === 'gpr')    return '<span style="font-size:11px;font-weight:600;padding:2px 7px;border-radius:4px;background:#dbeafe;color:#1d4ed8;margin-left:8px;">[GPR]</span>';
+  if (mt === 'rf')     return '<span style="font-size:11px;font-weight:600;padding:2px 7px;border-radius:4px;background:#dcfce7;color:#15803d;margin-left:8px;">[RF]</span>';
+  return '<span style="font-size:11px;font-weight:600;padding:2px 7px;border-radius:4px;background:#f1f5f9;color:#64748b;margin-left:8px;">[Linear]</span>';
+}
+
+function renderTargetHealthBanner(res) {
+  const r2test  = res.metrics_test.r2;
+  const r2train = res.metrics_train.r2;
+  const gap = r2train - r2test;
+  const rmse = res.metrics_test.rmse;
+  const rmseRange = res.output_range && res.output_range > 0
+    ? ` (${(rmse / res.output_range * 100).toFixed(1)}% of output range)` : '';
+  const lines = [];
+  if (gap > 0.1) {
+    lines.push(`⚠ Possible overfitting — training R² (${r2train.toFixed(3)}) is much higher than test R² (${r2test.toFixed(3)}). Gap: ${gap.toFixed(3)}.`);
+  }
+  if (r2test < 0.7) {
+    lines.push(`⚠ Low accuracy — test R² = ${r2test.toFixed(3)}. Consider a different model type or more data.`);
+  }
+  lines.push(`RMSE = ${rmse.toPrecision(4)}${rmseRange}`);
+  const alertClass = (gap > 0.1 || r2test < 0.7) ? 'alert-warning' : (r2test >= 0.9 ? 'alert-success' : 'alert-info');
+  return `<div class="alert ${alertClass}" style="margin:8px 0;font-size:12px;">${lines.join(' &nbsp;|&nbsp; ')}</div>`;
 }
 
 function renderResults(data) {
@@ -1531,7 +1737,8 @@ function renderResults(data) {
 
     html += `
     <div class="target-section">
-      <h3>Target: ${escHtml(target)}</h3>
+      <h3>Target: ${escHtml(target)}${modelTypeBadge(res.model_type || data.model_type)}</h3>
+      ${renderTargetHealthBanner(res)}
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
         <div class="metrics-section">
@@ -1576,6 +1783,8 @@ function renderResults(data) {
             <p>Each dot is one test simulation run. X-axis = actual CFD output; Y-axis = surrogate prediction. A perfect model has all dots on the diagonal line. Vertical spread above/below shows where the model is least accurate — check if errors cluster in a specific part of your operating envelope.</p>
           </div>
           <img src="data:image/png;base64,${res.parity_b64}" alt="Parity plot">
+          ${res.parity_caption ? `<div style="font-size:11px;color:var(--text-muted);margin-top:4px;font-style:italic;">${escHtml(res.parity_caption)}</div>` : ''}
+          <a href="data:image/png;base64,${res.parity_b64}" download="parity_${escHtml(target)}.png" style="font-size:11px;color:var(--accent);text-decoration:none;display:inline-block;margin-top:4px;">⬇ Save</a>
         </div>
         <div class="plot-box">
           <div class="plot-label">
@@ -1587,6 +1796,8 @@ function renderResults(data) {
             <p>Residual = actual output − predicted output. Random scatter around zero is good. A funnel shape means larger errors at higher output values. A curved pattern means a non-linear trend was missed — try GPR or Random Forest if you see this on a linear model.</p>
           </div>
           <img src="data:image/png;base64,${res.residuals_b64}" alt="Residuals">
+          ${res.residuals_caption ? `<div style="font-size:11px;color:var(--text-muted);margin-top:4px;font-style:italic;">${escHtml(res.residuals_caption)}</div>` : ''}
+          <a href="data:image/png;base64,${res.residuals_b64}" download="residuals_${escHtml(target)}.png" style="font-size:11px;color:var(--accent);text-decoration:none;display:inline-block;margin-top:4px;">⬇ Save</a>
         </div>
         <div class="plot-box">
           <div class="plot-label">
@@ -1599,6 +1810,7 @@ function renderResults(data) {
             <p>Use this to focus wind-tunnel or CFD resources on the most influential parameters, and to identify inputs that contribute little (candidates for removal to simplify your design space).</p>
           </div>
           <img src="data:image/png;base64,${res.feat_importance_b64}" alt="Feature importance">
+          <a href="data:image/png;base64,${res.feat_importance_b64}" download="importance_${escHtml(target)}.png" style="font-size:11px;color:var(--accent);text-decoration:none;display:inline-block;margin-top:4px;">⬇ Save</a>
         </div>
         <div class="sensitivity-panel">
           <h5>1D Sensitivity
@@ -1624,6 +1836,7 @@ function renderResults(data) {
           </details>
           <div class="plot-box" id="sens-box-${escHtml(target)}" style="display:none">
             <img id="sensitivity-plot-${escHtml(target)}" src="" alt="Sensitivity plot" style="width:100%">
+            <a id="sens-dl-${escHtml(target)}" href="#" onclick="(()=>{const a=document.createElement('a');a.href=document.getElementById('sensitivity-plot-${escHtml(target)}').src;a.download='sensitivity_${escHtml(target)}.png';a.click();})()" style="font-size:11px;color:var(--accent);text-decoration:none;display:inline-block;margin-top:4px;cursor:pointer;">⬇ Save</a>
           </div>
         </div>
 
@@ -1652,6 +1865,7 @@ function renderResults(data) {
           </div>
           <div class="plot-box" id="surface-box-${escHtml(target)}" style="display:none">
             <img id="surface-plot-${escHtml(target)}" src="" alt="Response surface" style="width:100%">
+            <a href="#" onclick="(()=>{const a=document.createElement('a');a.href=document.getElementById('surface-plot-${escHtml(target)}').src;a.download='surface_${escHtml(target)}.png';a.click();})()" style="font-size:11px;color:var(--accent);text-decoration:none;display:inline-block;margin-top:4px;cursor:pointer;">⬇ Save</a>
           </div>
         </div>` : ''}
       </div>
@@ -1714,7 +1928,7 @@ async function loadSensitivity(selectEl) {
     const url = `/api/sensitivity?feature=${encodeURIComponent(feature)}&target=${encodeURIComponent(target)}${refParams}`;
     const res = await fetch(url);
     const data = await res.json();
-    if (!res.ok) { alert(data.error); return; }
+    if (!res.ok) { showInlineError('train-error', data.error || 'Sensitivity plot failed.'); return; }
     imgEl.src = 'data:image/png;base64,' + data.plot_b64;
     const rangeEl = document.getElementById(`sens-range-${target}`);
     if (rangeEl && data.train_lo !== undefined && data.train_hi !== undefined) {
@@ -1723,7 +1937,7 @@ async function loadSensitivity(selectEl) {
     }
     sensBox.style.display = 'block';
   } catch (e) {
-    alert('Failed to load sensitivity plot: ' + e.message);
+    showInlineError('train-error', 'Failed to load sensitivity plot: ' + e.message);
   }
 }
 
@@ -1745,12 +1959,12 @@ async function loadSurface(target) {
     const res = await fetch(url);
     const data = await res.json();
     if (loadingEl) loadingEl.style.display = 'none';
-    if (!res.ok) { alert(data.error); return; }
+    if (!res.ok) { showInlineError('train-error', data.error || 'Surface plot failed.'); return; }
     imgEl.src = 'data:image/png;base64,' + data.plot_b64;
     surfaceBox.style.display = 'block';
   } catch (e) {
     if (loadingEl) loadingEl.style.display = 'none';
-    alert('Failed to load surface plot: ' + e.message);
+    showInlineError('train-error', 'Failed to load surface plot: ' + e.message);
   }
 }
 
@@ -1810,7 +2024,11 @@ function buildStep4() {
   }
   formHtml += '</div>';
   formHtml += '<button class="btn btn-primary" onclick="predictSingle()">Predict</button>';
+  formHtml += '<button type="button" class="btn btn-secondary" onclick="resetPredictionToMedians()" style="margin-left:8px;">Reset to medians</button>';
   form.innerHTML = formHtml;
+
+  // Q51: Enter key submits prediction form
+  form.addEventListener('keydown', e => { if (e.key === 'Enter') predictSingle(); });
 
   // Batch hint
   document.getElementById('batch-feature-hint').textContent = appState.featureCols.join(', ');
@@ -1834,6 +2052,15 @@ function buildStep4() {
 // ---------------------------------------------------------------------------
 // Step 2 validation helpers
 // ---------------------------------------------------------------------------
+function updateSplitRowCounts(pct) {
+  const el = document.getElementById('split-row-counts');
+  if (!el || !appState.summary) return;
+  const n = appState.summary.shape[0];
+  const nTest = Math.round(n * pct / 100);
+  const nTrain = n - nTest;
+  el.textContent = `${nTrain} train / ${nTest} test rows`;
+}
+
 function updateTestSizeWarning(pct) {
   const el = document.getElementById('test-size-warning');
   if (!el || !appState.summary) return;
@@ -1903,6 +2130,7 @@ window.goToStep = function(n) {
     document.getElementById('step2-feature-count').textContent = nFeatures;
     document.getElementById('step2-dataset-summary').style.display = 'block';
     applyModelRecommendation(nRows, nFeatures);
+    updateSplitRowCounts(parseInt(document.getElementById('test-size').value));
   }
 };
 
@@ -1915,6 +2143,15 @@ function showExtrapWarnings(warnings, elId) {
     el.style.display = 'block';
   } else {
     el.style.display = 'none';
+  }
+}
+
+function resetPredictionToMedians() {
+  for (const col of appState.featureCols) {
+    const inp = document.getElementById(`inp-${col}`);
+    if (inp && appState.featureMedians[col] !== undefined) {
+      inp.value = Number(appState.featureMedians[col]).toPrecision(4);
+    }
   }
 }
 
@@ -1954,10 +2191,11 @@ async function predictSingle() {
   let tableHtml = '<table class="result-table"><thead><tr>';
   for (const k of targetKeys) tableHtml += `<th>${escHtml(k)}</th>`;
   tableHtml += '</tr></thead><tbody><tr>';
+  const hasExtrap = data.extrapolation_warnings && data.extrapolation_warnings.length > 0;
   for (const k of targetKeys) {
     const val = pred[k];
     const std = pred[`${k}_std`];
-    tableHtml += `<td style="white-space:nowrap;">${typeof val === 'number' ? val.toPrecision(6) : val}${confidenceBadge(val, std)}</td>`;
+    tableHtml += `<td style="white-space:nowrap;">${typeof val === 'number' ? val.toPrecision(6) : val}${confidenceBadge(val, std, hasExtrap)}</td>`;
   }
   tableHtml += '</tr></tbody></table>';
   if (appState.modelType !== 'gpr' && appState.modelType !== 'rf') {
@@ -2020,14 +2258,14 @@ async function loadLearningCurve(target) {
     const res = await fetch(`/api/learning_curve?target=${encodeURIComponent(target)}`);
     const data = await res.json();
     if (loadingEl) loadingEl.style.display = 'none';
-    if (!res.ok) { alert(data.error || 'Failed to generate learning curve.'); return; }
+    if (!res.ok) { showInlineError('train-error', data.error || 'Learning curve failed.'); return; }
     imgEl.src = 'data:image/png;base64,' + data.plot_b64;
     const captionEl = document.getElementById(`lc-caption-${target}`);
     if (captionEl) captionEl.textContent = learningCurveCaption(data);
     boxEl.style.display = 'block';
   } catch (e) {
     if (loadingEl) loadingEl.style.display = 'none';
-    alert('Failed to load learning curve: ' + e.message);
+    showInlineError('train-error', 'Failed to load learning curve: ' + e.message);
   }
 }
 
@@ -2257,6 +2495,18 @@ function populateStep1Flags() {
     }
   }
 
+  // Q7/Q21: barely varies target (CV < 0.01)
+  for (const col of appState.targetCols) {
+    const s = stats[col];
+    if (s && s.cv !== undefined && s.cv < 0.01) {
+      appState.step1Flags.push({
+        type: 'warning',
+        label: `Output "${col}" barely varies across your runs (CV = ${s.cv.toFixed(4)})`,
+        detail: 'This output changes very little. The surrogate will have almost nothing to learn and predictions will be trivially close to the mean. Check whether this output is the right one to model, or whether your dataset captures the full operating range.',
+      });
+    }
+  }
+
   // F3: skewed target distribution (|skew| > 1.5)
   for (const col of appState.targetCols) {
     const s = stats[col];
@@ -2439,12 +2689,12 @@ async function runUnusualDetector() {
     data = await res.json();
     if (!res.ok) {
       if (loadEl) loadEl.style.display = 'none';
-      alert(data.error || 'Unusual run detection failed.');
+      showError('de-error', data.error || 'Unusual run detection failed.');
       return;
     }
   } catch (e) {
     if (loadEl) loadEl.style.display = 'none';
-    alert('Network error: ' + e.message);
+    showError('de-error', 'Network error: ' + e.message);
     return;
   }
 
@@ -2698,6 +2948,10 @@ async function runScatterPlot() {
 function applyModelRecommendation(nRows, nFeatures) {
   const rec = recommendModel(nRows, nFeatures);
   appState.recommendedModel = rec;
+  // Reset per-target recommendation tracking
+  appState.recommendationApplied = {};
+  for (const t of appState.targetCols) appState.recommendationApplied[t] = true;
+
   const banner = document.getElementById('model-recommendation-banner');
   const nameEl = document.getElementById('rec-model-name');
   const reasonEl = document.getElementById('rec-reason');
@@ -2750,7 +3004,11 @@ function renderModelHealth(results, targetCols) {
 // ---------------------------------------------------------------------------
 // Prediction confidence badge
 // ---------------------------------------------------------------------------
-function confidenceBadge(value, std) {
+function confidenceBadge(value, std, isExtrapolation) {
+  if (isExtrapolation) {
+    const stdTxt = (std !== undefined && std !== null) ? ` ±${std.toPrecision(3)}` : '';
+    return `<span class="conf-badge" style="background:#ede9fe;color:#6d28d9;border:1px solid #c4b5fd;">⚠ Uncertain — extrapolation${stdTxt}</span>`;
+  }
   if (std === undefined || std === null) return '';
   const relErr = Math.abs(std / (value || 1)) * 100;
   if (relErr < 2)
