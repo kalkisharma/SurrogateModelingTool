@@ -501,9 +501,30 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
 <div id="app-wrapper">
 
   <header>
-    <h1>Surrogate Modeling Tool</h1>
-    <p>Train a fast mathematical model on your CFD runs, then predict aerodynamic outputs for thousands of new design points without running the solver again — all data stays on your machine</p>
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+      <div>
+        <h1>Surrogate Modeling Tool</h1>
+        <p>Train a fast mathematical model on your CFD runs, then predict aerodynamic outputs for thousands of new design points without running the solver again — all data stays on your machine</p>
+      </div>
+      <button onclick="toggleWorkflowGuide()" style="font-size:12px;padding:5px 12px;background:white;border:1px solid var(--border);border-radius:5px;cursor:pointer;color:var(--accent);white-space:nowrap;margin-top:4px;">How to use this tool</button>
+    </div>
   </header>
+
+  <!-- Workflow guide modal -->
+  <div id="workflow-guide-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.45);z-index:1000;overflow-y:auto;">
+    <div style="background:white;max-width:560px;margin:60px auto 40px;border-radius:12px;padding:28px 32px;position:relative;box-shadow:0 8px 32px rgba(0,0,0,0.18);">
+      <button onclick="toggleWorkflowGuide()" style="position:absolute;top:12px;right:16px;font-size:18px;background:none;border:none;cursor:pointer;color:var(--text-muted);">✕</button>
+      <h2 style="font-size:17px;font-weight:700;color:var(--accent);margin-bottom:16px;">How to use this tool</h2>
+      <ol style="padding-left:20px;line-height:1.8;color:var(--text);font-size:13px;">
+        <li><strong>Upload CSV</strong> — your CFD results table with one row per simulation run. Numeric columns only for inputs and outputs.</li>
+        <li><strong>Explore data</strong> (Step 1) — check input correlations, feature–output relationships, and flag unusual runs before training.</li>
+        <li><strong>Select columns</strong> — choose which columns are inputs (features) and which are outputs (targets). Confirm to clean the data.</li>
+        <li><strong>Configure &amp; train</strong> (Step 2–3) — pick a model type (Linear, GPR, or Random Forest), train, then review parity plots, residuals, and feature importance.</li>
+        <li><strong>Predict</strong> (Step 4) — enter a single design point or upload a batch CSV to get predictions with uncertainty estimates. Use the sensitivity and surface plots to explore the response surface.</li>
+      </ol>
+      <p style="font-size:12px;color:var(--text-muted);margin-top:16px;">All data stays on your machine — no cloud connection required. Reopen this guide anytime from the header.</p>
+    </div>
+  </div>
 
   <div id="progress-bar">
     <div class="step-indicator active" data-step="1" data-base-label="Data Explorer" onclick="goToStep(1)" style="cursor:pointer;" title="Go to Step 1">
@@ -559,14 +580,17 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
     <div class="panel" id="summary-panel" style="display:none">
       <div class="panel-title">Data Summary <button class="btn-help" onclick="toggleHelp('help-summary-table')">?</button></div>
       <div id="help-summary-table" class="help-card" style="display:none;margin-bottom:12px;">
-        <p><strong>Distribution</strong> — shape of the data in that column:
-          <span class="skew-badge skew-r2">▶▶</span> strong right skew (few very high values) ·
-          <span class="skew-badge skew-r1">▶</span> mild right skew ·
-          <span class="skew-badge skew-sym">●</span> roughly symmetric ·
-          <span class="skew-badge skew-l1">◀</span> mild left skew ·
-          <span class="skew-badge skew-l2">◀◀</span> strong left skew.
-          Drag (C<sub>D</sub>) at high angles of attack is typically right-skewed — this is normal physics. Strongly skewed <em>targets</em> can reduce model accuracy in the tail region.</p>
-        <p><strong>Coverage</strong> — flags input features where the values barely change across your runs (coefficient of variation &lt; 1%). A column that barely varies gives the model almost no information about how it affects the output. Consider removing it from the feature list unless it is physically significant.</p>
+        <p><strong>Distribution</strong> — how lopsided your data is:
+          <span class="skew-badge skew-r2">▶▶</span> strong right-skew: long tail toward high values (common for drag near stall). <em>Your surrogate may under-predict at the highest values — consider adding more CFD runs in that region.</em> ·
+          <span class="skew-badge skew-r1">▶</span> mild right-skew: slight lean toward high values. Usually acceptable. ·
+          <span class="skew-badge skew-sym">●</span> symmetric: balanced. No action needed. ·
+          <span class="skew-badge skew-l1">◀</span> / <span class="skew-badge skew-l2">◀◀</span> mirror of above toward low values.
+          These are guidelines — not every skewed column needs action.</p>
+        <p><strong>Coverage</strong> — how much a column varies relative to its average (CV = standard deviation ÷ mean).
+          <span style="color:#16a34a;font-weight:700;">✓</span> ≥ 5% good variation &nbsp;
+          <span style="color:#d97706;font-weight:700;">!</span> 1–5% narrow range &nbsp;
+          <span style="color:#dc2626;font-weight:700;">✗</span> &lt;1% barely changes.
+          If mean ≈ 0 (e.g. pitching moment), CV is undefined — hover the cell for range and standard deviation instead.</p>
       </div>
       <div id="summary-table-wrapper"></div>
     </div>
@@ -654,6 +678,12 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
             <p><strong>What this shows:</strong> How strongly each pair of input features is correlated (Pearson r, −1 to +1). Red = strong positive correlation, blue = strong negative. 0 = no straight-line relationship (could still be nonlinear — check the scatter plots below).</p>
             <p><strong>Why it matters:</strong> Redundant inputs make the model harder to interpret. Consider removing one — but only if both are not independently meaningful for the physics.</p>
           </div>
+          <div style="margin-bottom:6px;">
+            <label style="font-size:11px;color:var(--text-muted);cursor:pointer;display:inline-flex;align-items:center;gap:4px;">
+              <input type="checkbox" id="de-corr-include-targets" onchange="reloadHeatmapWithTargets()">
+              Include outputs in heatmap
+            </label>
+          </div>
           <div id="de-corr-msg" style="display:none;margin-bottom:8px;"></div>
           <img id="de-corr-img" src="" alt="Correlation heatmap" style="display:none;max-width:100%;border-radius:8px;">
         </div>
@@ -704,8 +734,12 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
             <button onclick="runScatterPlot()" style="font-size:12px;padding:4px 12px;background:var(--accent);color:white;border:none;border-radius:4px;cursor:pointer;white-space:nowrap;">Plot</button>
           </div>
           <!-- Row 2: per-column parameter filter grid + log scale -->
-          <div style="margin-bottom:6px;font-size:11px;color:var(--text-muted);">
-            Slice data by parameter range: <span style="font-weight:normal;font-size:10px;">(leave empty to include all rows)</span>
+          <div style="margin-bottom:6px;font-size:11px;color:var(--text-muted);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:4px;">
+            <span>Slice data by parameter range: <span style="font-weight:normal;font-size:10px;">(leave empty to include all rows)</span></span>
+            <div style="display:flex;gap:6px;">
+              <button id="de-sc-slider-toggle" onclick="toggleScatterSliders()" style="font-size:11px;padding:2px 10px;background:white;border:1px solid var(--border);border-radius:4px;cursor:pointer;color:var(--text-muted);">Show sliders</button>
+              <button onclick="clearScatterFilters()" style="font-size:11px;padding:2px 10px;background:white;border:1px solid var(--border);border-radius:4px;cursor:pointer;color:var(--text-muted);">Clear filters</button>
+            </div>
           </div>
           <div id="de-sc-filters" style="display:flex;flex-wrap:wrap;gap:8px 16px;margin-bottom:8px;"></div>
           <div style="display:flex;gap:12px;align-items:center;margin-bottom:8px;font-size:11px;color:var(--text-muted);">
@@ -1013,6 +1047,7 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
       <div id="extrap-warning" class="alert alert-warning" style="display:none;margin-top:12px;"></div>
       <div id="single-error" class="alert alert-error" style="display:none;margin-top:12px;"></div>
       <div id="single-result" style="display:none;"></div>
+      <button id="use-as-sens-ref-btn" onclick="useAsSensitivityRef()" style="display:none;margin-top:8px;font-size:11px;padding:4px 12px;background:white;border:1px solid var(--border);border-radius:4px;cursor:pointer;color:var(--text-muted);">Use as sensitivity reference</button>
 
       <div id="exploration-plot-panel" style="display:none;margin-top:24px;border-top:1px solid var(--border);padding-top:16px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
@@ -1052,6 +1087,7 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
       <div id="batch-extrap-warning" class="alert alert-warning" style="display:none;margin-top:12px;"></div>
       <div id="batch-error" class="alert alert-error" style="display:none;margin-top:12px;"></div>
       <div id="batch-result-summary" style="display:none;"></div>
+      <div id="batch-preview-table" style="display:none;overflow-x:auto;"></div>
     </div>
 
     <div class="nav-row">
@@ -1234,9 +1270,9 @@ async function handleFileUpload(file) {
 function renderSummaryTable(summary) {
   const cols = summary.columns;
   let html = '<div style="overflow-x:auto"><table class="data-table"><thead><tr>'
-    + '<th>Column</th><th>Type</th><th>Min</th><th>Max</th><th>Mean</th>'
+    + '<th>Column</th><th>Type</th><th>Min</th><th>Max</th><th>Mean</th><th>Std</th>'
     + '<th title="Skewness: ▶▶ strong right · ▶ mild right · ● symmetric · ◀ mild left · ◀◀ strong left">Distribution</th>'
-    + '<th title="Coverage: flags inputs that barely change across your runs">Coverage</th>'
+    + '<th title="Coverage: CV = std÷mean. ✓ ≥5% good · ! 1–5% narrow · ✗ <1% barely varies">Coverage</th>'
     + '<th>Null Count</th>'
     + '</tr></thead><tbody>';
   for (const col of cols) {
@@ -1249,8 +1285,9 @@ function renderSummaryTable(summary) {
       <td>${stats ? stats.min.toPrecision(5) : '—'}</td>
       <td>${stats ? stats.max.toPrecision(5) : '—'}</td>
       <td>${stats ? stats.mean.toPrecision(5) : '—'}</td>
+      <td>${stats && stats.std !== undefined ? stats.std.toPrecision(4) : '—'}</td>
       <td style="text-align:center;">${stats ? distributionBadge(stats.skew) : '—'}</td>
-      <td>${stats ? coverageBadge(stats.cv) : ''}</td>
+      <td>${stats ? coverageTierBadge(stats) : ''}</td>
       <td style="color:${nulls > 0 ? 'var(--danger)' : 'var(--text-muted)'}">${nulls}</td>
     </tr>`;
   }
@@ -1348,7 +1385,7 @@ async function confirmColumns() {
     const nTotal = data.pairplot_n_total || 0;
     if (nTotal > 8) {
       const noteEl = document.getElementById('pairplot-note');
-      noteEl.textContent = `Showing ${nShown} of ${nTotal} selected columns. Use Data Explorer F2 for full coverage.`;
+      noteEl.textContent = `Showing ${nShown} of ${nTotal} selected columns (preview limit). Scroll to the Data Explorer below to see all column relationships.`;
       noteEl.style.display = 'block';
     }
     pairplotPanel.style.display = 'block';
@@ -1533,14 +1570,23 @@ async function runTraining() {
   document.getElementById('loading-spinner').style.display = 'block';
   document.getElementById('step3-next-btn').disabled = true;
 
-  // Q35: training time warning for RF/Linear on large datasets
   const nRows = appState.summary ? appState.summary.shape[0] : 0;
   const modelSel = document.getElementById('model-type').value;
   const timeWarnEl = document.getElementById('train-time-warning');
   if (timeWarnEl) {
-    const showWarn = (modelSel === 'rf' && nRows > 500) || (modelSel === 'linear' && nRows > 1000);
+    const perTargetCfg = getPerTargetConfig() || {};
+    const targetCount = appState.targetCols ? appState.targetCols.length : 0;
+    const gprTargets = appState.targetCols
+      ? appState.targetCols.filter(t => (perTargetCfg[t] ? perTargetCfg[t].model_type : modelSel) === 'gpr').length
+      : (modelSel === 'gpr' ? targetCount : 0);
+    const multiGprWarn = modelSel === 'gpr' && nRows > 500 && gprTargets > 1;
+    const showWarn = (modelSel === 'rf' && nRows > 500) || (modelSel === 'linear' && nRows > 1000) || multiGprWarn;
     if (showWarn) {
-      timeWarnEl.textContent = `Large dataset (${nRows} rows) — training may take 10–30 seconds. Please wait.`;
+      const estSec = multiGprWarn ? `~${gprTargets * Math.ceil(nRows / 200)} seconds` : '10–30 seconds';
+      const gprMsg = multiGprWarn
+        ? `Training ${gprTargets} GPR outputs at ${nRows} rows may take ${estSec} — consider Random Forest if speed matters.`
+        : `Large dataset (${nRows} rows) — training may take 10–30 seconds. Please wait.`;
+      timeWarnEl.textContent = gprMsg;
       timeWarnEl.style.display = 'block';
     } else {
       timeWarnEl.style.display = 'none';
@@ -1619,7 +1665,7 @@ function renderHistory(history, targetCols) {
     }
   }
 
-  const targetHeaders = targetCols.map(t => `<th>R² ${escHtml(t)}</th>`).join('');
+  const targetHeaders = targetCols.map(t => `<th>${escHtml(t)}</th>`).join('');
   let html = `<table class="history-table"><thead><tr>
     <th>Run</th><th>Model</th><th>Kernel</th><th>Time</th>${targetHeaders}
   </tr></thead><tbody>`;
@@ -1631,10 +1677,15 @@ function renderHistory(history, targetCols) {
     const modelLabel = entry.model_type === 'gpr' ? 'GPR' :
                        entry.model_type === 'rf'  ? 'Random Forest' : 'Linear';
     const targetCells = targetCols.map(t => {
-      const r2 = entry.metrics && entry.metrics[t] ? entry.metrics[t].r2_test : '—';
+      const m = entry.metrics && entry.metrics[t] ? entry.metrics[t] : null;
+      const r2 = m ? m.r2_test : '—';
+      const rmse_pct = m && m.rmse_pct != null ? m.rmse_pct : null;
       const isBest = typeof r2 === 'number' && r2 === bestR2[t] && history.length > 1;
       const cellStyle = isBest ? ' style="font-weight:700;background:#dcfce7;"' : '';
-      return `<td${cellStyle}>${typeof r2 === 'number' ? r2.toFixed(4) : r2}${isBest ? ' ★' : ''}</td>`;
+      const r2Text = typeof r2 === 'number' ? r2.toFixed(4) : r2;
+      const pctLine = rmse_pct != null
+        ? `<br><span style="font-size:10px;color:var(--text-muted);font-weight:400;">${rmse_pct.toFixed(1)}% err</span>` : '';
+      return `<td${cellStyle}>${r2Text}${isBest ? ' ★' : ''}${pctLine}</td>`;
     }).join('');
     html += `<tr class="${rowClass}">
       <td>${label}</td>
@@ -1648,11 +1699,15 @@ function renderHistory(history, targetCols) {
   html += '</tbody></table>';
 
   // Q34: add download comparison button + legend
-  const csvRows = ['Run,Model,Kernel,Time,' + targetCols.join(',')];
+  const csvCols = targetCols.flatMap(t => [`R2_${t}`, `RMSEpct_${t}`]);
+  const csvRows = ['Run,Model,Kernel,Time,' + csvCols.join(',')];
   history.forEach((entry, idx) => {
     const modelLabel = entry.model_type === 'gpr' ? 'GPR' : entry.model_type === 'rf' ? 'RF' : 'Linear';
-    const r2Vals = targetCols.map(t => entry.metrics && entry.metrics[t] ? entry.metrics[t].r2_test.toFixed(4) : '');
-    csvRows.push([idx + 1, modelLabel, entry.kernel_type || '—', entry.timestamp || '', ...r2Vals].join(','));
+    const metricVals = targetCols.flatMap(t => {
+      const m = entry.metrics && entry.metrics[t] ? entry.metrics[t] : null;
+      return [m ? m.r2_test.toFixed(4) : '', m && m.rmse_pct != null ? m.rmse_pct.toFixed(1) : ''];
+    });
+    csvRows.push([idx + 1, modelLabel, entry.kernel_type || '—', entry.timestamp || '', ...metricVals].join(','));
   });
   html += `<div style="margin-top:8px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">`;
   if (history.length > 1) html += `<span style="font-size:11px;color:var(--text-muted);">★ = best R² for that output</span>`;
@@ -2175,6 +2230,10 @@ async function predictSingle() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ inputs }),
     });
+    if (!res.headers.get('content-type')?.includes('application/json')) {
+      showError('single-error', 'Server returned an unexpected response. Check that the app is running correctly.');
+      return;
+    }
     data = await res.json();
     if (!res.ok) { showError('single-error', data.error); return; }
   } catch (e) {
@@ -2206,6 +2265,13 @@ async function predictSingle() {
   resultDiv.innerHTML = tableHtml;
   resultDiv.style.display = 'block';
 
+  // "Use as sensitivity reference" button
+  const sensRefBtn = document.getElementById('use-as-sens-ref-btn');
+  if (sensRefBtn) {
+    sensRefBtn.style.display = 'inline-block';
+    sensRefBtn._inputs = { ...inputs };
+  }
+
   // Add to exploration history (max 20)
   const histEntry = { inputs: { ...inputs }, predictions: {} };
   for (const k of Object.keys(pred)) histEntry.predictions[k] = pred[k];
@@ -2219,6 +2285,8 @@ async function predictBatch() {
   clearError('batch-extrap-warning');
   document.getElementById('batch-result-summary').style.display = 'none';
   document.getElementById('download-preds-link').style.display = 'none';
+  const batchPreviewEl = document.getElementById('batch-preview-table');
+  if (batchPreviewEl) batchPreviewEl.style.display = 'none';
 
   const file = document.getElementById('batch-file-input').files[0];
   if (!file) { showError('batch-error', 'Please select a CSV file.'); return; }
@@ -2238,10 +2306,46 @@ async function predictBatch() {
 
   showExtrapWarnings(data.extrapolation_warnings, 'batch-extrap-warning');
 
+  const nPred = data.predictions.length;
+  const nSkip = data.n_skipped || 0;
+  const skipNote = nSkip > 0 ? ` (${nSkip} row${nSkip !== 1 ? 's' : ''} skipped — missing values)` : '';
   const summaryEl = document.getElementById('batch-result-summary');
-  summaryEl.textContent = `✓ ${data.predictions.length} predictions generated.`;
+  summaryEl.textContent = `✓ ${nPred} row${nPred !== 1 ? 's' : ''} predicted${skipNote}.`;
   summaryEl.style.display = 'block';
   document.getElementById('download-preds-link').style.display = 'inline-flex';
+
+  // Preview table: first 5 rows
+  const previewEl = document.getElementById('batch-preview-table');
+  if (previewEl && data.predictions.length > 0) {
+    const preview = data.predictions.slice(0, 5);
+    const colKeys = data.feature_cols.concat(data.target_cols);
+    let tbl = '<table class="data-table" style="font-size:11px;margin-top:8px;"><thead><tr>'
+      + colKeys.map(k => `<th>${escHtml(k)}</th>`).join('') + '</tr></thead><tbody>';
+    preview.forEach(row => {
+      tbl += '<tr>' + colKeys.map(k => {
+        const v = row[k];
+        return `<td>${typeof v === 'number' ? v.toPrecision(5) : (v !== undefined ? escHtml(String(v)) : '—')}</td>`;
+      }).join('') + '</tr>';
+    });
+    if (nPred > 5) tbl += `<tr><td colspan="${colKeys.length}" style="color:var(--text-muted);text-align:center;">… ${nPred - 5} more rows in download</td></tr>`;
+    tbl += '</tbody></table>';
+    previewEl.innerHTML = tbl;
+    previewEl.style.display = 'block';
+  }
+}
+
+function useAsSensitivityRef() {
+  const btn = document.getElementById('use-as-sens-ref-btn');
+  const inputs = btn && btn._inputs ? btn._inputs : {};
+  for (const [col, val] of Object.entries(inputs)) {
+    for (const target of (appState.targetCols || [])) {
+      const el = document.getElementById(`sens-ref-${target}-${col}`);
+      if (el) el.value = typeof val === 'number' ? val.toPrecision(5) : val;
+    }
+  }
+  if (Object.keys(inputs).length > 0) {
+    goToStep(3);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2286,9 +2390,10 @@ function renderOutlierPanel(outlierInfo) {
   const summaryText = document.getElementById('outlier-summary-text');
   const detailsDiv = document.getElementById('outlier-details');
 
+  const sensLabel = (appState.iqrMultiplier || 1.5).toFixed(1) + '×';
   if (!outlierInfo || Object.keys(outlierInfo).length === 0) {
     if (appState.featureCols.length > 0) {
-      summaryText.textContent = 'No outliers detected at current sensitivity';
+      summaryText.textContent = `No outliers at ${sensLabel} sensitivity — data looks clean at this level`;
       detailsDiv.innerHTML = '';
       panel.style.display = 'block';
     } else {
@@ -2299,7 +2404,7 @@ function renderOutlierPanel(outlierInfo) {
 
   const flaggedRows = new Set(Object.values(outlierInfo).flatMap(v => v.row_indices));
   const nCols = Object.keys(outlierInfo).length;
-  summaryText.textContent = `${flaggedRows.size} flagged row(s) across ${nCols} column(s)`;
+  summaryText.textContent = `${flaggedRows.size} flagged row(s) at ${sensLabel} sensitivity`;
 
   let html = '';
   for (const [col, info] of Object.entries(outlierInfo)) {
@@ -2376,6 +2481,8 @@ async function onIqrMultiplierChange() {
 
   const btn = document.getElementById('confirm-columns-btn');
   btn.disabled = true;
+  const summaryTextEl = document.getElementById('outlier-summary-text');
+  if (summaryTextEl) summaryTextEl.textContent = `Rechecking at ${appState.iqrMultiplier.toFixed(1)}×…`;
 
   let data;
   try {
@@ -2411,7 +2518,7 @@ async function onIqrMultiplierChange() {
   }
   // restore multiplier select after renderOutlierPanel rebuilds the panel
   const sel = document.getElementById('iqr-multiplier-select');
-  if (sel) sel.value = String(appState.iqrMultiplier);
+  if (sel) sel.value = appState.iqrMultiplier.toFixed(1);
 }
 
 // ---------------------------------------------------------------------------
@@ -2432,6 +2539,11 @@ function escHtml(str) {
 function toggleHelp(id) {
   const el = document.getElementById(id);
   if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+function toggleWorkflowGuide() {
+  const modal = document.getElementById('workflow-guide-modal');
+  if (modal) modal.style.display = modal.style.display === 'none' ? 'block' : 'none';
 }
 
 // ---------------------------------------------------------------------------
@@ -2530,10 +2642,44 @@ function distributionBadge(skew) {
   return `<span class="skew-badge skew-sym" title="Skewness ${skew.toFixed(2)}">●</span>`;
 }
 
-// Coverage badge from coefficient of variation
-function coverageBadge(cv) {
-  if (cv === undefined || cv === null || isNaN(cv) || cv >= 0.01) return '';
-  return `<span class="barely-varies" title="CV = ${cv.toFixed(4)} — this column barely changes">barely varies</span>`;
+// Three-tier coverage badge
+function coverageTierBadge(stats) {
+  if (!stats) return '';
+  if (stats.mean_near_zero) {
+    const lo = stats.min !== undefined ? stats.min.toPrecision(4) : '?';
+    const hi = stats.max !== undefined ? stats.max.toPrecision(4) : '?';
+    const span = (stats.min !== undefined && stats.max !== undefined)
+      ? (stats.max - stats.min).toPrecision(3) : '?';
+    const std = stats.std !== undefined ? stats.std.toPrecision(3) : '?';
+    const tip = `Mean ≈ 0 — CV not applicable. Range: ${lo} to ${hi} (span: ${span}). Std = ${std}. This column varies and the surrogate can learn from it.`;
+    return `<span style="color:var(--text-muted);cursor:default;" title="${tip}">—</span>`;
+  }
+  const cv = stats.cv;
+  if (cv === undefined || cv === null || isNaN(cv)) return '';
+  const cvPct = cv * 100;
+  if (cvPct >= 5) {
+    return `<span style="color:#16a34a;font-weight:700;" title="CV = ${cvPct.toFixed(1)}% — good variation for learning">✓</span>`;
+  } else if (cvPct >= 1) {
+    return `<span style="color:#d97706;font-weight:700;" title="CV = ${cvPct.toFixed(1)}% — narrow range; surrogate learns something but may not generalise far outside this range">!</span>`;
+  } else {
+    return `<span style="color:#dc2626;font-weight:700;" title="CV = ${cvPct.toFixed(1)}% — barely changes across your dataset; little signal for the surrogate">✗</span>`;
+  }
+}
+
+async function reloadHeatmapWithTargets() {
+  const includeTargets = document.getElementById('de-corr-include-targets')?.checked || false;
+  const corrImg = document.getElementById('de-corr-img');
+  if (!corrImg) return;
+  corrImg.style.opacity = '0.4';
+  try {
+    const res = await fetch(`/api/data_explorer?include_targets=${includeTargets}`);
+    const data = await res.json();
+    if (res.ok && data.corr_heatmap_b64) {
+      corrImg.src = 'data:image/png;base64,' + data.corr_heatmap_b64;
+      corrImg.style.display = 'block';
+    }
+  } catch (_) {}
+  corrImg.style.opacity = '1';
 }
 
 // ---------------------------------------------------------------------------
@@ -2646,22 +2792,69 @@ function populateScatterDropdowns() {
   const filterContainer = document.getElementById('de-sc-filters');
   if (filterContainer) {
     const stats = (appState.summary || {}).stats || {};
+    const slidersVisible = document.getElementById('de-sc-filters')?.classList.contains('sliders-on');
     filterContainer.innerHTML = allCols.map((col, i) => {
       const lo = stats[col] ? +stats[col].min.toPrecision(5) : '';
       const hi = stats[col] ? +stats[col].max.toPrecision(5) : '';
       const hint = stats[col] ? ` (${lo} – ${hi})` : '';
-      return `<div style="display:flex;align-items:center;gap:4px;min-width:220px;">` +
+      const step = (lo !== '' && hi !== '' && hi !== lo) ? ((hi - lo) / 100) : 'any';
+      return `<div style="display:flex;flex-direction:column;gap:2px;min-width:220px;" data-filter-col="${i}">` +
+        `<div style="display:flex;align-items:center;gap:4px;">` +
         `<span style="font-size:11px;color:var(--text-muted);min-width:64px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(col)}">${escHtml(col)}:</span>` +
         `<input type="number" id="de-sc-flt-${i}-min" data-col="${escHtml(col)}" data-idx="${i}" step="any" value="${lo}" ` +
           `style="width:72px;font-size:11px;padding:2px 4px;border:1px solid var(--border);border-radius:3px;" ` +
-          `oninput="debouncedScatterPlot()" title="Min${hint}">` +
+          `oninput="syncFilterSlider(${i},'min');debouncedScatterPlot()" title="Min${hint}">` +
         `<span style="font-size:10px;color:var(--text-muted);">to</span>` +
         `<input type="number" id="de-sc-flt-${i}-max" data-col="${escHtml(col)}" data-idx="${i}" step="any" value="${hi}" ` +
           `style="width:72px;font-size:11px;padding:2px 4px;border:1px solid var(--border);border-radius:3px;" ` +
-          `oninput="debouncedScatterPlot()" title="Max${hint}">` +
+          `oninput="syncFilterSlider(${i},'max');debouncedScatterPlot()" title="Max${hint}">` +
+        `</div>` +
+        `<div class="filter-sliders" style="display:${slidersVisible ? 'flex' : 'none'};align-items:center;gap:4px;padding-left:68px;">` +
+        `<input type="range" id="de-sc-sld-${i}-min" min="${lo}" max="${hi}" step="${step}" value="${lo}" ` +
+          `style="width:72px;" onchange="syncFilterText(${i},'min');debouncedScatterPlot()">` +
+        `<input type="range" id="de-sc-sld-${i}-max" min="${lo}" max="${hi}" step="${step}" value="${hi}" ` +
+          `style="width:72px;" onchange="syncFilterText(${i},'max');debouncedScatterPlot()">` +
+        `</div>` +
         `</div>`;
     }).join('');
   }
+}
+
+function toggleScatterSliders() {
+  const container = document.getElementById('de-sc-filters');
+  const btn = document.getElementById('de-sc-slider-toggle');
+  if (!container) return;
+  const showing = container.classList.toggle('sliders-on');
+  container.querySelectorAll('.filter-sliders').forEach(d => { d.style.display = showing ? 'flex' : 'none'; });
+  if (btn) btn.textContent = showing ? 'Hide sliders' : 'Show sliders';
+}
+
+function syncFilterSlider(idx, which) {
+  const txt = document.getElementById(`de-sc-flt-${idx}-${which}`);
+  const sld = document.getElementById(`de-sc-sld-${idx}-${which}`);
+  if (txt && sld) {
+    const v = parseFloat(txt.value);
+    if (!isNaN(v)) sld.value = v;
+  }
+}
+
+function syncFilterText(idx, which) {
+  const sld = document.getElementById(`de-sc-sld-${idx}-${which}`);
+  const txt = document.getElementById(`de-sc-flt-${idx}-${which}`);
+  if (sld && txt) {
+    txt.value = sld.value;
+    if (which === 'min') {
+      const maxSld = document.getElementById(`de-sc-sld-${idx}-max`);
+      if (maxSld && parseFloat(sld.value) > parseFloat(maxSld.value)) sld.value = maxSld.value;
+    } else {
+      const minSld = document.getElementById(`de-sc-sld-${idx}-min`);
+      if (minSld && parseFloat(sld.value) < parseFloat(minSld.value)) sld.value = minSld.value;
+    }
+  }
+}
+
+function clearScatterFilters() {
+  document.querySelectorAll('#de-sc-filters input[type="number"]').forEach(inp => { inp.value = ''; });
 }
 
 function updateScatterRangeHints() {

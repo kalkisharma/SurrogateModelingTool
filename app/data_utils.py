@@ -10,6 +10,11 @@ SCATTER_MAX_POINTS = 500
 PAIRPLOT_MAX_COLS = 8
 CORR_THRESHOLD = 0.92
 CORR_MIN_PERIODS = 10
+PLOT_LABEL_SIZE = 10
+PLOT_TICK_SIZE = 9
+PLOT_ANNOT_SIZE = 9
+PLOT_TITLE_SIZE = 12
+PLOT_TIGHT_PAD = 1.5
 
 
 def validate_and_load_csv(filepath):
@@ -49,8 +54,10 @@ def get_summary(df):
             'min': float(series.min()),
             'max': float(series.max()),
             'mean': mean,
+            'std': float(std),
             'skew': float(series.skew()) if len(series) > 2 else 0.0,
             'cv': float(std / abs(mean)) if abs(mean) > 1e-10 else float(std),
+            'mean_near_zero': abs(mean) <= 1e-10,
         }
 
     return {
@@ -175,36 +182,64 @@ def get_pairplot_b64(df, columns, max_cols=PAIRPLOT_MAX_COLS, outlier_df=None):
     return base64.b64encode(buf.read()).decode('utf-8'), n_shown, n_total
 
 
-def get_correlation_heatmap_b64(df, feature_cols, threshold=0.92):
-    """Pearson correlation heatmap for feature columns.
+def get_correlation_heatmap_b64(df, feature_cols, threshold=CORR_THRESHOLD, extra_cols=None):
+    """Pearson correlation heatmap for feature columns, optionally including target columns.
 
+    extra_cols: optional list of target column names to append to the matrix.
     Returns (plot_b64, high_corr_pairs) where high_corr_pairs is a list of
-    {col_a, col_b, r} dicts for pairs with |r| >= threshold.
+    {col_a, col_b, r} dicts for feature-feature pairs with |r| >= threshold.
     Returns ('', []) when fewer than 2 numeric feature columns are available.
     """
-    cols = [c for c in feature_cols
-            if c in df.columns and pd.api.types.is_numeric_dtype(df[c])]
-    if len(cols) < 2:
+    feat_cols = [c for c in feature_cols
+                 if c in df.columns and pd.api.types.is_numeric_dtype(df[c])]
+    if len(feat_cols) < 2:
         return '', []
 
-    corr = df[cols].corr(min_periods=CORR_MIN_PERIODS)
+    tgt_cols = [c for c in (extra_cols or [])
+                if c in df.columns and pd.api.types.is_numeric_dtype(df[c]) and c not in feat_cols]
+    cols = feat_cols + tgt_cols
+    n_feat = len(feat_cols)
     n = len(cols)
+
+    corr = df[cols].corr(min_periods=CORR_MIN_PERIODS)
     fig_size = max(4.0, n * 1.1)
     fig, ax = plt.subplots(figsize=(fig_size, fig_size * 0.85))
 
-    im = ax.imshow(corr.values, vmin=-1, vmax=1, cmap='RdBu_r')
+    corr_masked = np.ma.masked_invalid(corr.values)
+    im = ax.imshow(corr_masked, vmin=-1, vmax=1, cmap='RdBu_r')
+    im.cmap.set_bad(color='#e5e7eb')
     plt.colorbar(im, ax=ax, shrink=0.75, label='Pearson r')
     ax.set_xticks(range(n))
     ax.set_yticks(range(n))
     ax.set_xticklabels(cols, rotation=45, ha='right', fontsize=10)
     ax.set_yticklabels(cols, fontsize=10)
+
     for i in range(n):
         for j in range(n):
             val = corr.iloc[i, j]
-            text_col = 'white' if abs(val) > 0.65 else '#374151'
+            if np.isnan(val):
+                ax.text(j, i, '–', ha='center', va='center', fontsize=9, color='#9ca3af')
+                continue
+            is_feat_tgt = (i < n_feat and j >= n_feat) or (j < n_feat and i >= n_feat)
+            is_strong_feat_tgt = is_feat_tgt and abs(val) > 0.7
+            if is_strong_feat_tgt:
+                text_col = '#15803d'
+            elif abs(val) > 0.65:
+                text_col = 'white'
+            else:
+                text_col = '#374151'
             ax.text(j, i, f'{val:.2f}', ha='center', va='center',
                     fontsize=9, color=text_col)
-    ax.set_title('Input Feature Correlations (Pearson r)', fontsize=11, pad=12)
+
+    if tgt_cols:
+        boundary = n_feat - 0.5
+        ax.axhline(boundary, color='#64748b', lw=1.5, linestyle='--', alpha=0.6)
+        ax.axvline(boundary, color='#64748b', lw=1.5, linestyle='--', alpha=0.6)
+        title = 'Feature & Output Correlations (Pearson r)'
+    else:
+        title = 'Input Feature Correlations (Pearson r)'
+
+    ax.set_title(title, fontsize=11, pad=12)
     fig.patch.set_facecolor('white')
     plt.tight_layout()
 
@@ -215,10 +250,10 @@ def get_correlation_heatmap_b64(df, feature_cols, threshold=0.92):
     plot_b64 = base64.b64encode(buf.read()).decode('utf-8')
 
     high_corr_pairs = []
-    for i in range(n):
-        for j in range(i + 1, n):
+    for i in range(n_feat):
+        for j in range(i + 1, n_feat):
             r = float(corr.iloc[i, j])
-            if abs(r) >= threshold:
+            if not np.isnan(r) and abs(r) >= threshold:
                 high_corr_pairs.append({'col_a': cols[i], 'col_b': cols[j], 'r': round(r, 3)})
 
     return plot_b64, high_corr_pairs
@@ -239,7 +274,7 @@ def get_feat_target_grid_b64(df, feature_cols, target_cols, max_feat_cols=3):
 
     ncols = min(len(feat_cols), max_feat_cols)
     nrows = len(targ_cols)
-    fig, axes = plt.subplots(nrows, ncols, figsize=(ncols * 3.2, nrows * 2.8),
+    fig, axes = plt.subplots(nrows, ncols, figsize=(ncols * 3.6, nrows * 3.2),
                              squeeze=False)
 
     nonlinear_hint_cols = []
@@ -269,14 +304,14 @@ def get_feat_target_grid_b64(df, feature_cols, target_cols, max_feat_cols=3):
                     if r2_lin < 0.7 and feat not in nonlinear_hint_cols:
                         nonlinear_hint_cols.append(feat)
                     ax.text(0.05, 0.92, f'R²={r2_lin:.2f}',
-                            transform=ax.transAxes, fontsize=7, color='#374151',
+                            transform=ax.transAxes, fontsize=PLOT_ANNOT_SIZE, color='#374151',
                             va='top')
                 except Exception:
                     pass
 
-            ax.set_xlabel(feat, fontsize=8)
-            ax.set_ylabel(targ, fontsize=8)
-            ax.tick_params(labelsize=7)
+            ax.set_xlabel(feat, fontsize=PLOT_LABEL_SIZE)
+            ax.set_ylabel(targ, fontsize=PLOT_LABEL_SIZE)
+            ax.tick_params(labelsize=PLOT_TICK_SIZE)
 
     for feat in feat_cols[ncols:]:
         for targ in targ_cols:
@@ -298,9 +333,9 @@ def get_feat_target_grid_b64(df, feature_cols, target_cols, max_feat_cols=3):
                     pass
 
     fig.suptitle('What Your Model Will Learn  (red line = linear trend)',
-                 fontsize=10, y=0.98)
+                 fontsize=PLOT_TITLE_SIZE, y=0.98)
     fig.patch.set_facecolor('white')
-    plt.tight_layout()
+    plt.tight_layout(pad=PLOT_TIGHT_PAD)
 
     buf = io.BytesIO()
     fig.savefig(buf, format='png', dpi=100, bbox_inches='tight')
@@ -459,7 +494,7 @@ def get_scatter_plot_b64(df, x_col, y_col, filters=None,
             Line2D([0], [0], marker='o', color='w', markerfacecolor='#dc2626', markersize=6, label='Review (>0.6)'),
             Line2D([0], [0], marker='o', color='w', markerfacecolor='#f97316', markersize=6, label='Monitor (0.4–0.6)'),
             Line2D([0], [0], marker='o', color='w', markerfacecolor='#2563EB', markersize=6, label='Typical (≤0.4)'),
-        ], fontsize=7, loc='best')
+        ], fontsize=PLOT_ANNOT_SIZE, loc='best')
 
     elif color_col and color_col in df.columns and pd.api.types.is_numeric_dtype(df[color_col]):
         color_vals = df_work[color_col].values.astype(float)

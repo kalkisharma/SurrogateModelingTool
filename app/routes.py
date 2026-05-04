@@ -249,6 +249,14 @@ def train():
     y_dict_train = {col: y_splits[i * 2] for i, col in enumerate(target_cols)}
     y_dict_test = {col: y_splits[i * 2 + 1] for i, col in enumerate(target_cols)}
 
+    # Snapshot mutable STATE keys so a mid-run exception leaves STATE clean
+    _state_backup = {
+        'results': state.get('results', {}),
+        'trained': state.get('trained', False),
+        'last_predictions': state.get('last_predictions'),
+        'train_history': list(state.get('train_history', [])),
+    }
+
     state['training_in_progress'] = True
     try:
         results = ml_engine.train_all(
@@ -257,6 +265,7 @@ def train():
             per_target_config=per_target_config,
         )
     except (LinAlgError, ValueError) as exc:
+        state.update(_state_backup)
         msg = str(exc).lower()
         if 'svd' in msg or 'singular' in msg or 'linalg' in msg:
             user_msg = ('GPR training failed: the data may be too correlated or identical rows exist. '
@@ -268,9 +277,11 @@ def train():
         logger.error('Training error', exc_info=True)
         return jsonify({'error': user_msg}), 500
     except MemoryError:
+        state.update(_state_backup)
         logger.error('MemoryError during training', exc_info=True)
         return jsonify({'error': 'Not enough memory to train. Try Random Forest or reduce dataset size.'}), 500
     except Exception as exc:
+        state.update(_state_backup)
         logger.error('Training error', exc_info=True)
         return jsonify({'error': f'Training failed: {exc}'}), 500
     finally:
@@ -282,12 +293,26 @@ def train():
 
     feature_medians = {col: float(df_clean[col].median()) for col in feature_cols}
 
-    # Update lightweight training history (keep last 3)
+    # Pre-compute output ranges (used in both history and results_json)
+    target_ranges = {}
+    for t in target_cols:
+        y_all = np.concatenate([y_dict_train[t], y_dict_test[t]])
+        target_ranges[t] = float(y_all.max() - y_all.min()) if len(y_all) > 1 else 1.0
+
+    # Update lightweight training history (keep last 10)
+    history_metrics = {}
+    for t in target_cols:
+        rmse = results[t]['metrics_test']['rmse']
+        output_range = target_ranges[t]
+        history_metrics[t] = {
+            'r2_test': results[t]['metrics_test']['r2'],
+            'rmse_pct': round(100 * rmse / output_range, 1) if output_range > 0 else None,
+        }
     history_entry = {
         'model_type': config['model_type'],
         'kernel_type': config['kernel_type'] if config['model_type'] == 'gpr' else '—',
         'timestamp': time.strftime('%H:%M:%S'),
-        'metrics': {t: {'r2_test': results[t]['metrics_test']['r2']} for t in target_cols},
+        'metrics': history_metrics,
     }
     history = state.get('train_history', [])
     history.append(history_entry)
@@ -296,8 +321,7 @@ def train():
     # Build JSON-serializable response (exclude the pipeline objects)
     results_json = {}
     for target, res in results.items():
-        y_all = np.concatenate([y_dict_train[target], y_dict_test[target]])
-        output_range = float(y_all.max() - y_all.min()) if len(y_all) > 1 else 1.0
+        output_range = target_ranges[target]
         results_json[target] = {
             'model_type': res.get('model_type', config['model_type']),
             'output_range': output_range,
@@ -414,6 +438,14 @@ def download_config():
 
 @main.route('/api/predict', methods=['POST'])
 def predict():
+    try:
+        return _predict_impl()
+    except Exception as exc:
+        logger.error('Predict error', exc_info=True)
+        return jsonify({'error': f'Prediction failed: {exc}'}), 500
+
+
+def _predict_impl():
     state = _state()
     if not state['trained']:
         return jsonify({'error': 'No trained model. Complete Step 3 first.'}), 400
@@ -510,7 +542,7 @@ def predict():
         'predictions': pred_rows,
         'feature_cols': feature_cols,
         'target_cols': target_cols,
-        'model_type': model_type,
+        'model_types': {t: state['results'][t].get('model_type', global_model_type) for t in target_cols},
         'extrapolation_warnings': extrap_warnings,
         'n_skipped': n_skipped,
     })
@@ -717,7 +749,23 @@ def data_explorer():
     cached_pairs = state.get('de_corr_pairs')
     cached_nonlinear = state.get('de_nonlinear_cols')
 
-    if cached_corr is not None:
+    df_clean = state['df_clean']
+    target_cols = state['target_cols']
+    include_targets = request.args.get('include_targets', 'false').lower() == 'true'
+
+    if include_targets:
+        heatmap_b64, high_corr_pairs = data_utils.get_correlation_heatmap_b64(
+            df_clean, feature_cols, extra_cols=target_cols
+        )
+        feat_target_b64 = cached_ft
+        nonlinear_hint_cols = cached_nonlinear
+        if feat_target_b64 is None:
+            feat_target_b64, nonlinear_hint_cols = data_utils.get_feat_target_grid_b64(
+                df_clean, feature_cols, target_cols, max_feat_cols=n_plotted
+            )
+            state['de_ft_b64'] = feat_target_b64
+            state['de_nonlinear_cols'] = nonlinear_hint_cols
+    elif cached_corr is not None:
         return jsonify({
             'corr_heatmap_b64': cached_corr,
             'feat_target_grid_b64': cached_ft,
@@ -726,21 +774,17 @@ def data_explorer():
             'n_plotted': n_plotted,
             'n_total_features': n_total_features,
         })
-
-    df_clean = state['df_clean']
-    target_cols = state['target_cols']
-
-    heatmap_b64, high_corr_pairs = data_utils.get_correlation_heatmap_b64(
-        df_clean, feature_cols
-    )
-    feat_target_b64, nonlinear_hint_cols = data_utils.get_feat_target_grid_b64(
-        df_clean, feature_cols, target_cols, max_feat_cols=n_plotted
-    )
-
-    state['de_corr_b64'] = heatmap_b64
-    state['de_corr_pairs'] = high_corr_pairs
-    state['de_ft_b64'] = feat_target_b64
-    state['de_nonlinear_cols'] = nonlinear_hint_cols
+    else:
+        heatmap_b64, high_corr_pairs = data_utils.get_correlation_heatmap_b64(
+            df_clean, feature_cols
+        )
+        feat_target_b64, nonlinear_hint_cols = data_utils.get_feat_target_grid_b64(
+            df_clean, feature_cols, target_cols, max_feat_cols=n_plotted
+        )
+        state['de_corr_b64'] = heatmap_b64
+        state['de_corr_pairs'] = high_corr_pairs
+        state['de_ft_b64'] = feat_target_b64
+        state['de_nonlinear_cols'] = nonlinear_hint_cols
 
     return jsonify({
         'corr_heatmap_b64': heatmap_b64,

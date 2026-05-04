@@ -20,6 +20,11 @@ N_BOOTSTRAP = 100
 RF_N_ESTIMATORS = 200
 GPR_N_RESTARTS = 5
 SURFACE_N_GRID = 30
+PLOT_LABEL_SIZE = 10
+PLOT_TICK_SIZE = 9
+PLOT_ANNOT_SIZE = 9
+PLOT_TITLE_SIZE = 12
+PLOT_TIGHT_PAD = 1.5
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +148,8 @@ def get_parity_plot_b64(y_true, y_pred, target_name):
     pad = (hi - lo) * 0.05
     lims = [lo - pad, hi + pad]
     ax.plot(lims, lims, 'k--', lw=1, alpha=0.5)
+    ax.text(lims[1] - (lims[1] - lims[0]) * 0.03, lims[1] - (lims[1] - lims[0]) * 0.03,
+            'perfect fit', fontsize=8, color='#9ca3af', ha='right', va='top')
     ax.set_xlim(lims)
     ax.set_ylim(lims)
 
@@ -231,7 +238,7 @@ def get_feature_importance_plot_b64(pipeline, feature_names, model_type, target_
     ax.set_xlim(0, sorted_vals.max() * 1.25)
     for i, val in enumerate(sorted_vals):
         ax.text(val + sorted_vals.max() * 0.02, i, f'{val*100:.1f}%',
-                va='center', fontsize=7, color='#374151')
+                va='center', fontsize=PLOT_ANNOT_SIZE, color='#374151')
     ax.set_yticks(range(n))
     ax.set_yticklabels([feature_names[i] for i in sorted_idx])
     ax.set_xlabel(xlabel)
@@ -277,7 +284,7 @@ def get_sensitivity_plot_b64(pipeline, X_ref, feature_names, feature_idx,
     ax.axvline(ref_val, color='grey', linestyle='--', lw=1, alpha=0.7, label='reference')
     ax.text(ref_val, 1.0, f'ref={ref_val:.3g}',
             transform=ax.get_xaxis_transform(), ha='center', va='bottom',
-            fontsize=7, color='#64748b')
+            fontsize=PLOT_ANNOT_SIZE, color='#64748b')
 
     # Training data boundary lines + faint extrapolation shading
     if train_lo is not None:
@@ -334,7 +341,7 @@ def get_surface_plot_b64(pipeline, X_ref, feature_names, idx_x, idx_y,
         cf1 = ax1.contourf(xx, yy, z_mean, levels=20, cmap='Blues')
         ax1.contour(xx, yy, z_mean, levels=10, colors='white', linewidths=0.4, alpha=0.5)
         _overlay_training(ax1)
-        plt.colorbar(cf1, ax=ax1, label=target_name)
+        plt.colorbar(cf1, ax=ax1, label=f'Predicted {target_name}')
         ax1.set_xlabel(feature_names[idx_x])
         ax1.set_ylabel(feature_names[idx_y])
         ax1.set_title(f'Mean Prediction — {target_name}')
@@ -356,7 +363,7 @@ def get_surface_plot_b64(pipeline, X_ref, feature_names, idx_x, idx_y,
         cf = ax.contourf(xx, yy, z_mean, levels=20, cmap='Blues')
         ax.contour(xx, yy, z_mean, levels=10, colors='white', linewidths=0.4, alpha=0.5)
         _overlay_training(ax)
-        plt.colorbar(cf, ax=ax, label=target_name)
+        plt.colorbar(cf, ax=ax, label=f'Predicted {target_name}')
         ax.set_xlabel(feature_names[idx_x])
         ax.set_ylabel(feature_names[idx_y])
         ax.set_title(f'Response Surface — {target_name}')
