@@ -257,6 +257,7 @@ def train():
         'train_history': list(state.get('train_history', [])),
     }
 
+    t_start = time.time()
     state['training_in_progress'] = True
     try:
         results = ml_engine.train_all(
@@ -287,6 +288,7 @@ def train():
     finally:
         state['training_in_progress'] = False
 
+    duration_sec = round(time.time() - t_start, 1)
     state['results'] = results
     state['trained'] = True
     state['last_predictions'] = None
@@ -311,7 +313,12 @@ def train():
     history_entry = {
         'model_type': config['model_type'],
         'kernel_type': config['kernel_type'] if config['model_type'] == 'gpr' else '—',
-        'timestamp': time.strftime('%H:%M:%S'),
+        'per_target_models': {t: results[t]['model_type'] for t in target_cols},
+        'per_target_kernels': {
+            t: (config['kernel_type'] if results[t]['model_type'] == 'gpr' else '—')
+            for t in target_cols
+        },
+        'duration_sec': duration_sec,
         'metrics': history_metrics,
     }
     history = state.get('train_history', [])

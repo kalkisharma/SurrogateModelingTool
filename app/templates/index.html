@@ -1665,49 +1665,66 @@ function renderHistory(history, targetCols) {
     }
   }
 
-  const targetHeaders = targetCols.map(t => `<th>${escHtml(t)}</th>`).join('');
+  const targetHeaders = targetCols.map(t => `<th>R² ${escHtml(t)}</th>`).join('');
   let html = `<table class="history-table"><thead><tr>
-    <th>Run</th><th>Model</th><th>Kernel</th><th>Time</th>${targetHeaders}
+    <th>Run</th><th>Model</th><th>Kernel</th><th>Duration</th>${targetHeaders}
   </tr></thead><tbody>`;
 
   history.forEach((entry, idx) => {
     const isCurrent = idx === history.length - 1;
     const rowClass = isCurrent ? 'current-row' : '';
     const label = isCurrent ? `${idx + 1} ★` : `${idx + 1}`;
-    const modelLabel = entry.model_type === 'gpr' ? 'GPR' :
-                       entry.model_type === 'rf'  ? 'Random Forest' : 'Linear';
+
+    // Model cell: show per-target breakdown if targets used different models
+    const ptModels = entry.per_target_models || {};
+    const modelValues = targetCols.map(t => ptModels[t] || entry.model_type);
+    const allSameModel = modelValues.every(v => v === modelValues[0]);
+    const modelDisplayMap = { gpr: 'GPR', rf: 'Random Forest', linear: 'Linear' };
+    let modelCell, kernelCell;
+    if (allSameModel) {
+      modelCell = modelDisplayMap[modelValues[0]] || modelValues[0];
+      const ptKernels = entry.per_target_kernels || {};
+      kernelCell = escHtml(ptKernels[targetCols[0]] || entry.kernel_type || '—');
+    } else {
+      const tip = targetCols.map(t => `${t}: ${modelDisplayMap[ptModels[t]] || ptModels[t] || entry.model_type}`).join(', ');
+      modelCell = `<span title="${escHtml(tip)}" style="cursor:default;border-bottom:1px dashed var(--text-muted);">Mixed</span>`;
+      kernelCell = '—';
+    }
+
     const targetCells = targetCols.map(t => {
       const m = entry.metrics && entry.metrics[t] ? entry.metrics[t] : null;
       const r2 = m ? m.r2_test : '—';
-      const rmse_pct = m && m.rmse_pct != null ? m.rmse_pct : null;
       const isBest = typeof r2 === 'number' && r2 === bestR2[t] && history.length > 1;
       const cellStyle = isBest ? ' style="font-weight:700;background:#dcfce7;"' : '';
       const r2Text = typeof r2 === 'number' ? r2.toFixed(4) : r2;
-      const pctLine = rmse_pct != null
-        ? `<br><span style="font-size:10px;color:var(--text-muted);font-weight:400;">${rmse_pct.toFixed(1)}% err</span>` : '';
-      return `<td${cellStyle}>${r2Text}${isBest ? ' ★' : ''}${pctLine}</td>`;
+      return `<td${cellStyle}>${r2Text}${isBest ? ' ★' : ''}</td>`;
     }).join('');
+
     html += `<tr class="${rowClass}">
       <td>${label}</td>
-      <td>${modelLabel}</td>
-      <td>${escHtml(entry.kernel_type || '—')}</td>
-      <td>${escHtml(entry.timestamp || '')}</td>
+      <td>${modelCell}</td>
+      <td>${kernelCell}</td>
+      <td>${fmtDuration(entry.duration_sec)}</td>
       ${targetCells}
     </tr>`;
   });
 
   html += '</tbody></table>';
 
-  // Q34: add download comparison button + legend
+  // Download comparison CSV (includes RMSE% even though it's not shown in the table)
   const csvCols = targetCols.flatMap(t => [`R2_${t}`, `RMSEpct_${t}`]);
-  const csvRows = ['Run,Model,Kernel,Time,' + csvCols.join(',')];
+  const csvRows = ['Run,Model,Kernel,Duration,' + csvCols.join(',')];
   history.forEach((entry, idx) => {
-    const modelLabel = entry.model_type === 'gpr' ? 'GPR' : entry.model_type === 'rf' ? 'RF' : 'Linear';
+    const ptModels = entry.per_target_models || {};
+    const modelValues = targetCols.map(t => ptModels[t] || entry.model_type);
+    const allSame = modelValues.every(v => v === modelValues[0]);
+    const modelDisplayMap = { gpr: 'GPR', rf: 'RF', linear: 'Linear' };
+    const modelLabel = allSame ? (modelDisplayMap[modelValues[0]] || modelValues[0]) : 'Mixed';
     const metricVals = targetCols.flatMap(t => {
       const m = entry.metrics && entry.metrics[t] ? entry.metrics[t] : null;
       return [m ? m.r2_test.toFixed(4) : '', m && m.rmse_pct != null ? m.rmse_pct.toFixed(1) : ''];
     });
-    csvRows.push([idx + 1, modelLabel, entry.kernel_type || '—', entry.timestamp || '', ...metricVals].join(','));
+    csvRows.push([idx + 1, modelLabel, entry.kernel_type || '—', fmtDuration(entry.duration_sec), ...metricVals].join(','));
   });
   html += `<div style="margin-top:8px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">`;
   if (history.length > 1) html += `<span style="font-size:11px;color:var(--text-muted);">★ = best R² for that output</span>`;
@@ -2544,6 +2561,14 @@ function toggleHelp(id) {
 function toggleWorkflowGuide() {
   const modal = document.getElementById('workflow-guide-modal');
   if (modal) modal.style.display = modal.style.display === 'none' ? 'block' : 'none';
+}
+
+function fmtDuration(sec) {
+  if (sec == null || isNaN(sec)) return '—';
+  if (sec < 60) return `${Math.round(sec)}s`;
+  const m = Math.floor(sec / 60);
+  const s = Math.round(sec % 60);
+  return s > 0 ? `${m}m ${s}s` : `${m}m`;
 }
 
 // ---------------------------------------------------------------------------
