@@ -39,7 +39,10 @@ app/templates/index.html  # single-page 4-step wizard; inline CSS + JS
 | Per-target model | Each output can use Linear/GPR/RF via `per_target_config` dict |
 | Plot font sizes | `PLOT_LABEL_SIZE=10`, `PLOT_TICK_SIZE=9`, `PLOT_ANNOT_SIZE=9`, `PLOT_TITLE_SIZE=12`, `PLOT_TIGHT_PAD=1.5` (constants in both `ml_engine.py` and `data_utils.py`) |
 | Coverage tiers | CV ≥5% ✓ green, 1–5% ! amber, <1% ✗ red; mean≈0 → "—" with tooltip |
-| History cells | Stacked: R² on top + RMSE% below in muted text per target |
+| History cells | R² only (4 d.p.) per target; RMSE% stored in entry but shown in CSV export only |
+| History entry fields | `model_type`, `kernel_type`, `per_target_models` dict, `per_target_kernels` dict, `duration_sec` (elapsed seconds), `metrics` dict |
+| History Model column | Shows model name if all targets match; "Mixed" with tooltip breakdown if per-target models differ |
+| History Duration | `time.time()` elapsed around `train_all()`; formatted `fmtDuration()` as "Xs" or "Xm Ys" |
 
 ---
 
