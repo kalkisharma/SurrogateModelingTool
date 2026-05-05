@@ -1000,7 +1000,7 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
       </button>
       <div id="loading-spinner">
         <div class="spinner-ring"></div>
-        <p style="margin-top:12px;color:var(--text-muted);font-size:13px;">Training in progress — GPR may take up to a minute…</p>
+        <p style="margin-top:12px;color:var(--text-muted);font-size:13px;">Training in progress — GPR may take up to a minute… <span id="train-elapsed"></span></p>
       </div>
     </div>
 
@@ -1577,6 +1577,10 @@ async function runTraining() {
   document.getElementById('train-btn').disabled = true;
   document.getElementById('loading-spinner').style.display = 'block';
   document.getElementById('step3-next-btn').disabled = true;
+  const trainElapsedEl = document.getElementById('train-elapsed');
+  trainElapsedEl.textContent = '';
+  let _trainSec = 0;
+  const _trainTimer = setInterval(() => { trainElapsedEl.textContent = `${++_trainSec}s elapsed`; }, 1000);
 
   const nRows = appState.summary ? appState.summary.shape[0] : 0;
   const modelSel = document.getElementById('model-type').value;
@@ -1624,18 +1628,21 @@ async function runTraining() {
     });
     data = await res.json();
     if (!res.ok) {
+      clearInterval(_trainTimer); trainElapsedEl.textContent = '';
       showError('train-error', data.error || 'Training failed.');
       document.getElementById('loading-spinner').style.display = 'none';
       document.getElementById('train-btn').disabled = false;
       return;
     }
   } catch (e) {
+    clearInterval(_trainTimer); trainElapsedEl.textContent = '';
     showError('train-error', 'Network error: ' + e.message);
     document.getElementById('loading-spinner').style.display = 'none';
     document.getElementById('train-btn').disabled = false;
     return;
   }
 
+  clearInterval(_trainTimer); trainElapsedEl.textContent = '';
   document.getElementById('loading-spinner').style.display = 'none';
   document.getElementById('train-btn').disabled = false;
   if (timeWarnEl) timeWarnEl.style.display = 'none';
