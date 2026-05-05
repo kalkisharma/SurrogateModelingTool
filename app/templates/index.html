@@ -599,6 +599,7 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
       <div class="panel-title">Column Selection</div>
       <p style="color:var(--text-muted);font-size:13px;margin-bottom:14px;">
         Select which columns are <strong>input features</strong> and which are <strong>output targets</strong>.
+        Inputs are the design parameters you control (e.g. angle of attack, Mach number). Outputs are the quantities you want to predict (e.g. C<sub>L</sub>, C<sub>D</sub>).
         A column cannot be both. Only numeric columns can be targets.
       </p>
       <div class="col-selector-grid">
@@ -611,6 +612,7 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
           <div id="target-checkboxes"></div>
         </div>
       </div>
+      <div id="col-mutex-note" class="alert alert-info" style="display:none;margin-top:8px;font-size:12px;"></div>
       <div id="column-error" class="alert alert-error" style="display:none;margin-top:12px;"></div>
       <div style="margin-top:16px;">
         <button class="btn btn-primary" id="confirm-columns-btn" onclick="confirmColumns()">Confirm Column Selection</button>
@@ -810,7 +812,7 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
       <div id="gpr-time-estimate" style="display:none;margin-bottom:14px;padding:7px 12px;background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;font-size:12px;color:#92400e;"></div>
 
       <div class="panel-title">Model Configuration</div>
-      <p style="font-size:12px;color:var(--text-muted);margin-bottom:16px;margin-top:-8px;">These settings control how the model learns. The training algorithm optimises the model's internal values automatically — but it cannot change these settings. That's your job.</p>
+      <p style="font-size:12px;color:var(--text-muted);margin-bottom:16px;margin-top:-8px;">In this step you choose the <em>type</em> of mathematical function the model will fit to your data — Linear (straight-line relationships), GPR (smooth curves with uncertainty), or Random Forest (flexible, tree-based). The training algorithm then finds the best-fitting version of whichever type you choose, but it cannot change the type itself. That decision is yours.</p>
 
       <div class="form-group">
         <label for="model-type">Model Type <button class="btn-help" onclick="toggleHelp('help-model-type')">?</button></label>
@@ -1171,8 +1173,10 @@ function goToStep(n) {
 function showStepError(msg) {
   const errEl = document.getElementById(`step${appState.currentStep}-error`) ||
                 document.getElementById('train-error');
-  if (errEl) { errEl.textContent = msg; errEl.style.display = 'block'; }
-  else console.warn('Step error (no container):', msg);
+  if (errEl) {
+    errEl.textContent = msg; errEl.style.display = 'block';
+    errEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  } else console.warn('Step error (no container):', msg);
 }
 
 function showError(elId, msg) {
@@ -1320,19 +1324,29 @@ function renderColumnCheckboxes(summary) {
   }
 
   // Mutual exclusion
+  let _mutexTimer;
+  function showMutexNote(msg) {
+    const el = document.getElementById('col-mutex-note');
+    if (!el) return;
+    el.textContent = msg; el.style.display = 'block';
+    clearTimeout(_mutexTimer);
+    _mutexTimer = setTimeout(() => { el.style.display = 'none'; }, 3000);
+  }
   document.querySelectorAll('.feature-cb').forEach(cb => {
     cb.addEventListener('change', () => {
       if (cb.checked) {
-        document.querySelectorAll(`.target-cb[value="${CSS.escape(cb.value)}"]`)
-          .forEach(t => { t.checked = false; });
+        const removed = [...document.querySelectorAll(`.target-cb[value="${CSS.escape(cb.value)}"]`)].filter(t => t.checked);
+        removed.forEach(t => { t.checked = false; });
+        if (removed.length) showMutexNote(`"${cb.value}" moved to Features — a column can only be in one list.`);
       }
     });
   });
   document.querySelectorAll('.target-cb').forEach(cb => {
     cb.addEventListener('change', () => {
       if (cb.checked) {
-        document.querySelectorAll(`.feature-cb[value="${CSS.escape(cb.value)}"]`)
-          .forEach(f => { f.checked = false; });
+        const removed = [...document.querySelectorAll(`.feature-cb[value="${CSS.escape(cb.value)}"]`)].filter(f => f.checked);
+        removed.forEach(f => { f.checked = false; });
+        if (removed.length) showMutexNote(`"${cb.value}" moved to Targets — a column can only be in one list.`);
       }
     });
   });
@@ -1366,7 +1380,9 @@ async function confirmColumns() {
   }
 
   btn.disabled = false;
-  btn.textContent = 'Confirm Column Selection';
+  btn.textContent = '✓ Saved';
+  btn.style.background = '#16a34a';
+  setTimeout(() => { btn.textContent = 'Confirm Column Selection'; btn.style.background = ''; }, 1500);
   appState.featureCols = featureCols;
   appState.targetCols = targetCols;
 
@@ -1895,6 +1911,7 @@ function renderResults(data) {
           <div id="help-plot-importance-${escHtml(target)}" class="help-card" style="display:none;margin:8px;">
             <p>Shows which design parameters drive the output most. <strong>Linear:</strong> size of fitted coefficient. <strong>GPR:</strong> how quickly predictions change with each input (1/length scale — per-feature relevance detection, ARD). <strong>Random Forest:</strong> how much each input reduces prediction error across 200 trees (feature influence score, MDI).</p>
             <p>Use this to focus wind-tunnel or CFD resources on the most influential parameters, and to identify inputs that contribute little (candidates for removal to simplify your design space).</p>
+            <p style="color:var(--warning-text);"><strong>Note:</strong> importance values are not comparable across model types — a high Linear coefficient and a high RF score measure fundamentally different things. Only compare importance values between runs using the same model type.</p>
           </div>
           <img src="data:image/png;base64,${res.feat_importance_b64}" alt="Feature importance">
           <a href="data:image/png;base64,${res.feat_importance_b64}" download="importance_${escHtml(target)}.png" style="font-size:11px;color:var(--accent);text-decoration:none;display:inline-block;margin-top:4px;">⬇ Save</a>
@@ -1991,7 +2008,7 @@ function metricCard(label, value, colour) {
 
 function renderLsTable(lsValues, featureCols) {
   if (!lsValues || !featureCols) return '';
-  let html = '<table class="ls-table"><thead><tr><th>Feature</th><th>Opt. Length Scale</th></tr></thead><tbody>';
+  let html = '<table class="ls-table"><thead><tr><th>Feature</th><th>Opt. Length Scale <span style="font-weight:400;font-size:10px;color:var(--text-muted);">(shorter = more relevant)</span></th></tr></thead><tbody>';
   for (let i = 0; i < featureCols.length; i++) {
     const ls = lsValues[i] !== undefined ? lsValues[i].toFixed(6) : '—';
     html += `<tr><td>${escHtml(featureCols[i])}</td><td>${ls}</td></tr>`;
