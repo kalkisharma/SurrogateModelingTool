@@ -42,6 +42,15 @@ def _initial_state():
     }
 
 
+def _read_version(base_dir):
+    version_path = os.path.join(base_dir, 'VERSION')
+    try:
+        with open(version_path) as f:
+            return f.read().strip()
+    except OSError:
+        return 'unknown'
+
+
 def create_app():
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     app = Flask(__name__, template_folder='templates')
@@ -60,6 +69,7 @@ def create_app():
     handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(name)s: %(message)s'))
     app.logger.addHandler(handler)
     app.logger.setLevel(logging.INFO)
+    app.logger.info('Surrogate Modeling Tool v%s', _read_version(base_dir))
 
     from app.routes import main
     app.register_blueprint(main)
