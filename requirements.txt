@@ -1,6 +1,9 @@
-flask
-scikit-learn
-pandas
-numpy
-matplotlib
-joblib
+# Exact versions required — do not upgrade without testing.
+# Flask 1.1.x API (attachment_filename= in send_file) is incompatible with Flask 2+.
+# NumPy 1.21.5 and scikit-learn 1.0.2 are required together to avoid MKL DLL errors on Windows.
+flask==1.1.2
+numpy==1.21.5
+scikit-learn==1.0.2
+pandas==1.4.4
+matplotlib==3.5.2
+joblib==1.1.0
