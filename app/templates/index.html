@@ -1083,7 +1083,7 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
       </p>
       <input type="file" id="batch-file-input" accept=".csv" style="margin-bottom:10px;">
       <br>
-      <button class="btn btn-primary" onclick="predictBatch()">Predict Batch</button>
+      <button class="btn btn-primary" id="batch-predict-btn" onclick="predictBatch()">Predict Batch</button>
       <div id="batch-extrap-warning" class="alert alert-warning" style="display:none;margin-top:12px;"></div>
       <div id="batch-error" class="alert alert-error" style="display:none;margin-top:12px;"></div>
       <div id="batch-result-summary" style="display:none;"></div>
@@ -2319,15 +2319,28 @@ async function predictBatch() {
   const formData = new FormData();
   formData.append('file', file);
 
+  const btn = document.getElementById('batch-predict-btn');
+  btn.disabled = true;
+  btn.textContent = 'Processing…';
+
   let data;
   try {
     const res = await fetch('/api/predict', { method: 'POST', body: formData });
     data = await res.json();
-    if (!res.ok) { showError('batch-error', data.error); return; }
+    if (!res.ok) {
+      showError('batch-error', data.error);
+      btn.disabled = false;
+      btn.textContent = 'Predict Batch';
+      return;
+    }
   } catch (e) {
     showError('batch-error', 'Network error: ' + e.message);
+    btn.disabled = false;
+    btn.textContent = 'Predict Batch';
     return;
   }
+  btn.disabled = false;
+  btn.textContent = 'Predict Batch';
 
   showExtrapWarnings(data.extrapolation_warnings, 'batch-extrap-warning');
 
