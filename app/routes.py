@@ -705,6 +705,11 @@ def learning_curve_route():
     y = df_clean[target].values
     n = len(X)
 
+    if n < 20:
+        return jsonify({
+            'error': f'Not enough data for a learning curve — need at least 20 rows, this dataset has {n}.'
+        }), 400
+
     if model_type == 'gpr':
         fitted_gpr = state['results'][target]['pipeline'].named_steps['model']
         kernel = sklearn_clone(fitted_gpr.kernel_)
