@@ -80,6 +80,7 @@ header p { color: var(--text-muted); font-size: 13px; margin-top: 2px; }
 .step-indicator.active .step-num { background: rgba(255,255,255,0.3); }
 .step-indicator.done { background: #dbeafe; color: var(--accent); border-color: #bfdbfe; }
 .step-indicator.done .step-num { background: var(--accent); }
+.step-indicator.locked { opacity: 0.5; cursor: not-allowed !important; }
 
 /* Panels */
 .panel {
@@ -657,7 +658,7 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
 
     <details id="data-explorer-section" class="panel" style="display:none;padding-top:12px;margin-top:0;">
       <summary style="font-size:13px;font-weight:600;cursor:pointer;color:var(--accent);list-style:none;display:flex;align-items:center;gap:8px;padding:4px 0;">
-        <span>&#9658;</span> Explore Data Relationships — correlations, linearity &amp; unusual runs
+        <span>&#9658;</span> Explore Data Relationships — run these four checks before training
       </summary>
       <div style="padding-top:14px;">
         <div id="de-loading" class="alert alert-info" style="display:none;font-size:12px;">Analysing dataset…</div>
@@ -802,6 +803,7 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
     <div class="panel">
       <div id="step2-dataset-summary" style="display:none;font-size:12px;color:var(--text);margin-bottom:14px;padding:6px 12px;background:var(--panel);border-radius:6px;border:1px solid var(--border);">
         Dataset: <strong id="step2-row-count" style="color:var(--accent);">—</strong> simulation runs · <strong id="step2-feature-count" style="color:var(--accent);">—</strong> input features
+        <div id="step2-col-names" style="margin-top:5px;font-size:11px;color:var(--text-muted);"></div>
       </div>
 
       <div id="model-recommendation-banner" class="alert alert-info" style="display:none;margin-bottom:16px;">
@@ -994,6 +996,7 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
 
     <div class="panel">
       <div class="panel-title">Training &amp; Validation</div>
+      <div id="step3-col-summary" style="display:none;font-size:12px;color:var(--text-muted);margin-bottom:12px;padding:5px 10px;background:var(--panel);border-radius:6px;border:1px solid var(--border);"></div>
       <div id="train-error" class="alert alert-error" style="display:none;"></div>
       <div id="gpr-warning-banner" class="alert alert-warning" style="display:none;"></div>
       <div id="train-time-warning" class="alert alert-warning" style="display:none;font-size:12px;"></div>
@@ -1165,6 +1168,7 @@ function goToStep(n) {
     const s = parseInt(ind.dataset.step);
     ind.classList.toggle('active', s === n);
     ind.classList.toggle('done', s < n);
+    ind.classList.toggle('locked', !!(STEP_GATES[s] && !STEP_GATES[s]()));
     // Checkmarks for completed steps
     const baseLabel = ind.dataset.baseLabel || ind.dataset.label || ind.textContent.replace(' ✓', '').trim();
     ind.dataset.baseLabel = baseLabel;
@@ -1391,6 +1395,13 @@ async function confirmColumns() {
   appState.featureCols = featureCols;
   appState.targetCols = targetCols;
 
+  // Populate persistent column name summaries in Steps 2 and 3
+  const colNamesHtml = `<span style="color:var(--text-muted);">Inputs: </span>${featureCols.map(c => `<span style="background:#dbeafe;color:var(--accent);border-radius:3px;padding:1px 5px;margin-right:3px;font-size:10px;">${escHtml(c)}</span>`).join('')}&nbsp;&nbsp;<span style="color:var(--text-muted);">Outputs: </span>${targetCols.map(c => `<span style="background:#dcfce7;color:#16a34a;border-radius:3px;padding:1px 5px;margin-right:3px;font-size:10px;">${escHtml(c)}</span>`).join('')}`;
+  const step2Names = document.getElementById('step2-col-names');
+  if (step2Names) step2Names.innerHTML = colNamesHtml;
+  const step3Sum = document.getElementById('step3-col-summary');
+  if (step3Sum) { step3Sum.innerHTML = colNamesHtml; step3Sum.style.display = 'block'; }
+
   if (data.n_dropped > 0) {
     const el = document.getElementById('drop-info');
     el.textContent = `${data.n_dropped} row(s) removed because they had missing values in selected columns. ${data.n_rows} rows remain.`;
@@ -1440,7 +1451,7 @@ async function confirmColumns() {
   const deSec = document.getElementById('data-explorer-section');
   if (deSec) {
     deSec.style.display = 'block';
-    deSec.removeAttribute('open');
+    deSec.setAttribute('open', '');
   }
   // Clear stale data explorer content
   ['de-corr-img', 'de-ft-img', 'de-ur-img', 'de-sc-img'].forEach(id => {
@@ -1849,7 +1860,7 @@ function renderResults(data) {
       const rangeHint = stats
         ? `<div style="font-size:10px;color:var(--text-muted);margin-top:1px;">${Number(stats.min).toPrecision(3)} – ${Number(stats.max).toPrecision(3)}</div>`
         : '';
-      return `<span style="white-space:nowrap;margin-right:8px;display:inline-block;margin-bottom:4px;">${escHtml(f)}: <input type="number" step="any" id="sens-ref-${escHtml(target)}-${escHtml(f)}" value="${escHtml(median)}" style="width:65px;font-size:11px;padding:2px 4px;border:1px solid var(--border);border-radius:4px;background:white;" onchange="loadSensIfActive('${escHtml(target)}')">${rangeHint}</span>`;
+      return `<span style="white-space:nowrap;margin-right:8px;display:inline-block;margin-bottom:4px;">${escHtml(f)}: <input type="number" step="any" id="sens-ref-${escHtml(target)}-${escHtml(f)}" value="${escHtml(median)}" style="width:65px;font-size:11px;padding:2px 4px;border:1px solid var(--border);border-radius:4px;background:white;" onchange="debouncedLoadSensIfActive('${escHtml(target)}')">${rangeHint}</span>`;
     }).join('');
 
     html += `
@@ -2465,6 +2476,12 @@ function loadSensIfActive(target) {
     const sel = document.querySelector(`.sensitivity-feature-select[data-target="${CSS.escape(target)}"]`);
     if (sel && sel.value) loadSensitivity(sel);
   }
+}
+
+const _sensRefTimers = {};
+function debouncedLoadSensIfActive(target) {
+  clearTimeout(_sensRefTimers[target]);
+  _sensRefTimers[target] = setTimeout(() => loadSensIfActive(target), 400);
 }
 
 // ---------------------------------------------------------------------------
@@ -3083,33 +3100,33 @@ function recommendModel(nRows, nFeatures) {
     // If nonlinear signals exist but dataset is tiny, still must use Linear
     return { model: 'linear',
              name: 'Linear Regression',
-             reason: `Only ${nRows} runs — too few for Gaussian Process Regression (GPR) to optimise reliably. Linear Regression is selected as a fast baseline. Add more CFD runs for a better surrogate.` };
+             reason: `Only ${nRows} runs — too few for GPR to optimise reliably. Use as a fast baseline. Switch to GPR once you have 20+ runs.` };
   }
   if (nRows <= 500 && nFeatures <= nRows / 5) {
     if (nonlinear.length > 0)
       return { model: 'gpr',
                name: 'Gaussian Process Regression (GPR)',
-               reason: `${nRows} runs, ${nFeatures} features — small dataset with non-linear signals detected.${nonlinearStr} GPR handles non-linear response surfaces and provides confidence estimates (±σ).` };
+               reason: `${nRows} runs, ${nFeatures} features — small dataset with non-linear signals detected.${nonlinearStr} GPR fits smooth curves and gives a probabilistic uncertainty estimate (±σ). Switch to Random Forest if training takes too long or your dataset grows past ~500 rows.` };
     return { model: 'gpr',
              name: 'Gaussian Process Regression (GPR)',
-             reason: `${nRows} runs, ${nFeatures} features — small dataset. GPR is most accurate on small, clean datasets and provides a confidence estimate (±σ) for every prediction.` };
+             reason: `${nRows} runs, ${nFeatures} features — small, clean dataset. GPR gives the most accurate fit and a probabilistic uncertainty estimate (±σ). Switch to Random Forest if you add more data — GPR training time grows rapidly above 500 rows.` };
   }
   if (nRows <= 500 && nFeatures > nRows / 5)
     return { model: 'rf',
              name: 'Random Forest',
-             reason: `${nFeatures} features for ${nRows} runs is a high input-to-run ratio. Random Forest handles many inputs better than GPR at this data size.${nonlinearStr}` };
+             reason: `${nFeatures} features for ${nRows} runs is a high input-to-run ratio. Random Forest handles many inputs more reliably than GPR at this data size. Switch to GPR only if you need probabilistic uncertainty estimates and can reduce your feature count.${nonlinearStr}` };
   if (nRows > 2000)
     return { model: 'rf',
              name: 'Random Forest',
-             reason: `${nRows} runs — large dataset. GPR processing time grows very rapidly with data size. Random Forest gives good accuracy and trains in seconds.${nonlinearStr}` };
+             reason: `${nRows} runs — GPR training time scales as O(n³) and would take minutes or more at this size. Random Forest trains in seconds and gives good accuracy. Switch to GPR only on a filtered subset (< 500 rows).${nonlinearStr}` };
   // 501–2000 rows: use GPR if few features and no nonlinear signals, else RF
   if (nFeatures <= 3 && nonlinear.length === 0)
     return { model: 'gpr',
              name: 'Gaussian Process Regression (GPR)',
-             reason: `${nRows} runs, ${nFeatures} features — medium dataset with few inputs. GPR gives accurate predictions and confidence estimates at this size.` };
+             reason: `${nRows} runs, ${nFeatures} features — medium dataset with few inputs. GPR is still feasible here and gives probabilistic uncertainty estimates. Switch to Random Forest if training is slow or you add more features.` };
   return { model: 'rf',
            name: 'Random Forest',
-           reason: `${nRows} runs — medium dataset. Random Forest balances accuracy and training speed well at this size.${nonlinearStr}` };
+           reason: `${nRows} runs — medium-to-large dataset. Random Forest trains quickly and handles many inputs well. Switch to GPR only if you need smooth extrapolation or formal uncertainty estimates and have fewer than ~500 rows.${nonlinearStr}` };
 }
 
 // ---------------------------------------------------------------------------
