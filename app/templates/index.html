@@ -1065,11 +1065,11 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
         </div>
         <div id="help-exploration" class="help-card" style="display:none;margin-bottom:10px;">
           <p>Each prediction you run is plotted here so you can track how your design point compares to the training data envelope (grey band). Use this to explore the design space systematically — vary one input at a time and watch how the outputs change.</p>
-          <p>The ± bar on each dot is the model's uncertainty (±1σ). Taller bars = less confident prediction, usually far from your training data.</p>
+          <p>The ± bar on each dot is the model's uncertainty (<abbr title="GPR: posterior standard deviation (probabilistic); RF: ensemble spread across 200 trees (proxy); Linear: bootstrap spread across 100 resampled models (sensitivity to training data)" style="cursor:help;text-decoration:underline dotted;">±1σ</abbr>). Taller bars = less confident prediction, usually far from your training data.</p>
         </div>
         <div id="exploration-charts"></div>
         <p style="font-size:11px;color:var(--text-muted);margin-top:8px;">
-          Grey band = training data range · Dashed line = training mean · Blue dot = latest prediction · Grey dots = previous predictions · Vertical bars = model uncertainty (±1σ)
+          Grey band = training data range · Dashed line = training mean · Blue dot = latest prediction · Grey dots = previous predictions · Vertical bars = <abbr title="GPR: posterior standard deviation (probabilistic); RF: ensemble spread across 200 trees (proxy); Linear: bootstrap spread across 100 resampled models (sensitivity to training data)" style="cursor:help;text-decoration:underline dotted;">model uncertainty (±1σ)</abbr>
         </p>
       </div>
     </div>
@@ -1905,7 +1905,7 @@ function renderResults(data) {
           </h5>
           <div id="help-plot-sens-${escHtml(target)}" class="help-card" style="display:none;margin-bottom:8px;">
             <p>One input is varied across its full training range; all other inputs are held at the reference point. Steeper slope = output is more sensitive to that input. Flat line = insensitive, safe to hold that parameter fixed.</p>
-            <p>The shaded band (GPR/RF) shows ±1 standard deviation of model uncertainty. Wider band = less confidence, usually where training data is sparse — consider adding more CFD runs in those regions.</p>
+            <p>The shaded band (GPR/RF) shows <abbr title="${sigmaTip(res.model_type)}" style="cursor:help;text-decoration:underline dotted;">±1σ uncertainty</abbr>. Wider band = less confidence, usually where training data is sparse — consider adding more CFD runs in those regions.</p>
           </div>
           <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;">Steeper slope = output is more sensitive to this input. Flat = insensitive</div>
           <div class="sensitivity-controls">
@@ -2286,7 +2286,8 @@ async function predictSingle() {
   for (const k of targetKeys) {
     const val = pred[k];
     const std = pred[`${k}_std`];
-    tableHtml += `<td style="white-space:nowrap;">${typeof val === 'number' ? val.toPrecision(6) : val}${confidenceBadge(val, std, hasExtrap)}</td>`;
+    const tgtModelType = (data.model_types && data.model_types[k]) || appState.modelType;
+    tableHtml += `<td style="white-space:nowrap;">${typeof val === 'number' ? val.toPrecision(6) : val}${confidenceBadge(val, std, hasExtrap, tgtModelType)}</td>`;
   }
   tableHtml += '</tr></tbody></table>';
   if (appState.modelType !== 'gpr' && appState.modelType !== 'rf') {
@@ -3250,18 +3251,26 @@ function renderModelHealth(results, targetCols) {
 // ---------------------------------------------------------------------------
 // Prediction confidence badge
 // ---------------------------------------------------------------------------
-function confidenceBadge(value, std, isExtrapolation) {
+function sigmaTip(modelType) {
+  if (modelType === 'gpr') return 'Posterior standard deviation — probabilistic uncertainty; grows naturally away from training data';
+  if (modelType === 'rf')  return 'Ensemble spread — std across 200 trees; a proxy for uncertainty, not a statistical confidence interval';
+  return 'Bootstrap spread — std across 100 resampled models; sensitivity to training data variation';
+}
+
+function confidenceBadge(value, std, isExtrapolation, modelType) {
   if (isExtrapolation) {
     const stdTxt = (std !== undefined && std !== null) ? ` ±${std.toPrecision(3)}` : '';
     return `<span class="conf-badge" style="background:#ede9fe;color:#6d28d9;border:1px solid #c4b5fd;">⚠ Uncertain — extrapolation${stdTxt}</span>`;
   }
   if (std === undefined || std === null) return '';
   const relErr = Math.abs(std / (value || 1)) * 100;
+  const tip = sigmaTip(modelType);
+  const sigmaHtml = `<abbr title="${tip}" style="cursor:help;text-decoration:underline dotted;">±${std.toPrecision(3)}</abbr>`;
   if (relErr < 2)
-    return `<span class="conf-badge conf-high">High confidence ±${std.toPrecision(3)}</span>`;
+    return `<span class="conf-badge conf-high">High confidence ${sigmaHtml}</span>`;
   if (relErr < 5)
-    return `<span class="conf-badge conf-med">Moderate confidence ±${std.toPrecision(3)}</span>`;
-  return `<span class="conf-badge conf-low">⚠ Low confidence ±${std.toPrecision(3)} — verify with CFD</span>`;
+    return `<span class="conf-badge conf-med">Moderate confidence ${sigmaHtml}</span>`;
+  return `<span class="conf-badge conf-low">⚠ Low confidence ${sigmaHtml} — verify with CFD</span>`;
 }
 
 // ---------------------------------------------------------------------------
