@@ -58,7 +58,7 @@ The browser opens automatically at `http://localhost:5000`.
 
 Upload a CSV file with one row per simulation run. The tool displays a summary table (column types, min/max/mean/std, skew distribution badges, coverage tiers, null counts).
 
-**Column selection:** Choose which columns are input features (design parameters you control) and which are output targets (quantities you want to predict). Only numeric columns can be targets. Confirm your selection to clean the data and generate a scatter matrix.
+**Column selection:** Choose which columns are input features (design parameters you control) and which are output targets (quantities you want to predict). Only numeric columns can be targets. Confirm your selection to clean the data and generate a scatter matrix. If any input column has the same value in every row (no variation), a warning will appear — that column carries no information and should be unchecked.
 
 **Outlier detection:** After confirming columns, the tool flags rows outside 1.5× IQR per column. Use the sensitivity selector to switch to 3.0× for data that intentionally spans extreme conditions (e.g. post-stall drag). Check "Exclude flagged rows" to remove them from training data.
 
@@ -98,7 +98,7 @@ Click **Train Model**. Results appear per output column:
 - **Feature importance** — normalized influence of each input on this output
 - **1D Sensitivity** — sweep one input across its training range while holding others at a reference point; ±1σ band shows model uncertainty
 - **2D Response Surface** — colour map over a 30×30 grid of two inputs; GPR adds an uncertainty panel
-- **Learning Curve** (on demand) — training and validation R² vs. dataset size; diagnoses overfitting and underfitting
+- **Learning Curve** (on demand) — training and validation R² vs. dataset size; diagnoses overfitting and underfitting. Requires at least 20 rows.
 
 For GPR, the optimized kernel string and per-feature length scales are shown after training. A shorter length scale for a feature means the model found it more relevant.
 
