@@ -175,6 +175,11 @@ header p { color: var(--text-muted); font-size: 13px; margin-top: 2px; }
   border-color: var(--accent);
   background: #eff6ff;
 }
+#upload-zone.uploaded {
+  border-color: #16a34a;
+  border-style: solid;
+  background: #f0fdf4;
+}
 #upload-zone .upload-icon { font-size: 32px; margin-bottom: 8px; }
 #upload-zone p { color: var(--text-muted); font-size: 13px; }
 #upload-zone strong { color: var(--accent); }
@@ -850,9 +855,9 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
                 </tr>
                 <tr style="background:#f8fafc;">
                   <td style="padding:4px 8px;font-weight:600;border:1px solid #bfdbfe;">Uncertainty (±σ)</td>
-                  <td style="padding:4px 8px;border:1px solid #bfdbfe;">✓ (100 resamples)</td>
-                  <td style="padding:4px 8px;border:1px solid #bfdbfe;">✓ analytical</td>
-                  <td style="padding:4px 8px;border:1px solid #bfdbfe;">✓ tree variance</td>
+                  <td style="padding:4px 8px;border:1px solid #bfdbfe;">✓ bootstrap (100 resampled training sets)</td>
+                  <td style="padding:4px 8px;border:1px solid #bfdbfe;">✓ analytical (posterior std)</td>
+                  <td style="padding:4px 8px;border:1px solid #bfdbfe;">✓ ensemble spread (200 trees)</td>
                 </tr>
                 <tr>
                   <td style="padding:4px 8px;font-weight:600;border:1px solid #bfdbfe;">Handles non-linear</td>
@@ -891,7 +896,8 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
       </div>
 
       <div id="gpr-panel" style="display:none">
-        <div style="font-size:12px;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #bfdbfe;">GPR Hyperparameters</div>
+        <div style="font-size:12px;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;padding-bottom:6px;border-bottom:1px solid #bfdbfe;">GPR Hyperparameters</div>
+        <p style="font-size:11px;color:var(--text-muted);margin-bottom:10px;">These values are starting points — the optimizer adjusts them automatically during training. You almost never need to change them. The fields are editable for advanced use only.</p>
         <div class="form-group">
           <label for="kernel-type">Kernel <button class="btn-help" onclick="toggleHelp('help-kernel-type')">?</button></label>
           <div id="help-kernel-type" class="help-card" style="display:none;margin-bottom:8px;">
@@ -914,7 +920,7 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
           <input type="number" id="alpha" value="1e-6" min="1e-10" step="any" style="width:160px" placeholder="e.g. 1e-6">
           <p class="hint">A small number that keeps the GPR math solver stable. For clean CFD output (deterministic solvers), the default 1e-6 is correct — do not change it. Only increase if your solver has convergence scatter or you're fitting wind-tunnel data with real measurement noise. Values above 0.1 will visibly smooth predictions and reduce accuracy.</p>
         </div>
-        <div class="alert alert-info">Hyperparameters are auto-optimized via L-BFGS-B (5 random restarts). Optimized values are shown after training.</div>
+        <div class="alert alert-info">Hyperparameters are optimized automatically during training using 5 independent starting points (to avoid local optima). Optimized values are shown after training.</div>
       </div>
 
       <div id="rf-panel" style="display:none">
@@ -1228,6 +1234,8 @@ fileInput.addEventListener('change', () => { if (fileInput.files[0]) handleFileU
 async function handleFileUpload(file) {
   clearError('upload-error');
   document.getElementById('upload-status').textContent = `Uploading ${file.name}…`;
+  const _uz = document.getElementById('upload-zone');
+  if (_uz) { _uz.classList.remove('uploaded'); const _ic = _uz.querySelector('.upload-icon'); if (_ic) _ic.textContent = '📂'; }
   document.getElementById('summary-panel').style.display = 'none';
   document.getElementById('column-selection-panel').style.display = 'none';
   document.getElementById('step1-next-btn').disabled = true;
@@ -1254,6 +1262,12 @@ async function handleFileUpload(file) {
   appState.nonlinearFeatures = [];
   const [rows, cols] = data.summary.shape;
   document.getElementById('upload-status').textContent = `✓ Uploaded: ${data.filename} (${rows} rows × ${cols} columns)`;
+  const uploadZoneEl = document.getElementById('upload-zone');
+  if (uploadZoneEl) {
+    uploadZoneEl.classList.add('uploaded');
+    const iconEl = uploadZoneEl.querySelector('.upload-icon');
+    if (iconEl) iconEl.textContent = '✓';
+  }
 
   renderSummaryTable(data.summary);
   renderColumnCheckboxes(data.summary);
@@ -1935,7 +1949,7 @@ function renderResults(data) {
             <div style="font-size:11px;font-weight:400;color:var(--text-muted);margin-top:2px;">Longer bar = that input has more influence on the predicted output</div>
           </div>
           <div id="help-plot-importance-${escHtml(target)}" class="help-card" style="display:none;margin:8px;">
-            <p>Shows which design parameters drive the output most. <strong>Linear:</strong> size of fitted coefficient. <strong>GPR:</strong> how quickly predictions change with each input (1/length scale — per-feature relevance detection, ARD). <strong>Random Forest:</strong> how much each input reduces prediction error across 200 trees (feature influence score, MDI).</p>
+            <p>Shows which design parameters drive the output most. <strong>Linear:</strong> size of fitted coefficient. <strong>GPR:</strong> how quickly predictions change with each input (1/length scale — Automatic Relevance Determination, ARD). <strong>Random Forest:</strong> how much each input reduces prediction error across 200 trees (Mean Decrease in Impurity, MDI).</p>
             <p>Use this to focus wind-tunnel or CFD resources on the most influential parameters, and to identify inputs that contribute little (candidates for removal to simplify your design space).</p>
             <p style="color:var(--warning-text);"><strong>Note:</strong> importance values are not comparable across model types — a high Linear coefficient and a high RF score measure fundamentally different things. Only compare importance values between runs using the same model type.</p>
           </div>
