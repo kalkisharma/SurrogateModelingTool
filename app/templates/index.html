@@ -1378,6 +1378,14 @@ async function confirmColumns() {
     document.getElementById('drop-info').style.display = 'none';
   }
 
+  if (data.zero_variance_features && data.zero_variance_features.length > 0) {
+    showInlineMsg('column-error',
+      'These input columns have the same value in every row and will not help the model: '
+      + data.zero_variance_features.map(c => escHtml(c)).join(', ')
+      + '. Consider unchecking them.',
+      'warning');
+  }
+
   const pairplotPanel = document.getElementById('pairplot-panel');
   if (data.pairplot_b64) {
     document.getElementById('pairplot-img').src = 'data:image/png;base64,' + data.pairplot_b64;

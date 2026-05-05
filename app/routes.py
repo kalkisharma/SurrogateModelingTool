@@ -161,6 +161,8 @@ def set_columns():
             n_outliers_excluded = len(all_outlier_idx)
             n_dropped += n_outliers_excluded
 
+    zero_variance_cols = [c for c in feature_cols if df_clean[c].std() == 0]
+
     pairplot_b64, pairplot_n_shown, pairplot_n_total = data_utils.get_pairplot_b64(
         df_clean, feature_cols + target_cols, outlier_df=outlier_df
     )
@@ -180,6 +182,7 @@ def set_columns():
         'pairplot_n_total': pairplot_n_total,
         'outlier_info': outlier_info,
         'n_outliers_excluded': n_outliers_excluded,
+        'zero_variance_features': zero_variance_cols,
     })
 
 
