@@ -1049,6 +1049,11 @@ input[type=range] { padding: 0; border: none; accent-color: var(--accent); width
       <div id="extrap-warning" class="alert alert-warning" style="display:none;margin-top:12px;"></div>
       <div id="single-error" class="alert alert-error" style="display:none;margin-top:12px;"></div>
       <div id="single-result" style="display:none;"></div>
+      <p id="conf-legend" style="display:none;font-size:11px;color:var(--text-muted);margin-top:6px;">
+        Confidence: <span class="conf-badge conf-high" style="font-size:10px;padding:1px 6px;">High</span> model uncertainty &lt;2% of prediction &nbsp;·&nbsp;
+        <span class="conf-badge conf-med" style="font-size:10px;padding:1px 6px;">Moderate</span> 2–5% &nbsp;·&nbsp;
+        <span class="conf-badge conf-low" style="font-size:10px;padding:1px 6px;">Low</span> &gt;5%
+      </p>
       <button id="use-as-sens-ref-btn" onclick="useAsSensitivityRef()" style="display:none;margin-top:8px;font-size:11px;padding:4px 12px;background:white;border:1px solid var(--border);border-radius:4px;cursor:pointer;color:var(--text-muted);">Use as sensitivity reference</button>
 
       <div id="exploration-plot-panel" style="display:none;margin-top:24px;border-top:1px solid var(--border);padding-top:16px;">
@@ -1660,8 +1665,14 @@ async function runTraining() {
 
   clearInterval(_trainTimer); trainElapsedEl.textContent = '';
   document.getElementById('loading-spinner').style.display = 'none';
-  document.getElementById('train-btn').disabled = false;
   if (timeWarnEl) timeWarnEl.style.display = 'none';
+  const trainBtn = document.getElementById('train-btn');
+  trainBtn.textContent = '✓ Training complete';
+  trainBtn.style.background = '#16a34a';
+  await new Promise(r => setTimeout(r, 900));
+  trainBtn.textContent = '▶ Train Model';
+  trainBtn.style.background = '';
+  trainBtn.disabled = false;
 
   if (data.gpr_warning) {
     const banner = document.getElementById('gpr-warning-banner');
@@ -1792,7 +1803,10 @@ function renderTargetHealthBanner(res) {
 
 function renderResults(data) {
   const panel = document.getElementById('results-panel');
-  let html = renderRetrospectivePanel();
+  let html = `<div style="font-size:12px;color:var(--text-muted);margin-bottom:14px;padding:8px 12px;background:var(--panel);border-radius:6px;border:1px solid var(--border);">
+    <strong>How to read these results:</strong>&nbsp; ① Health banner &rarr; ② R² on test set &rarr; ③ Parity plot (where errors occur) &rarr; ④ Feature importance (which inputs drive the output)
+  </div>`;
+  html += renderRetrospectivePanel();
   html += renderModelHealth(data.results, data.target_cols);
 
   for (const target of data.target_cols) {
@@ -1887,6 +1901,7 @@ function renderResults(data) {
           </div>
           <img src="data:image/png;base64,${res.parity_b64}" alt="Parity plot">
           ${res.parity_caption ? `<div style="font-size:11px;color:var(--text-muted);margin-top:4px;font-style:italic;">${escHtml(res.parity_caption)}</div>` : ''}
+          <div style="font-size:11px;color:var(--text-muted);margin-top:3px;">Points should follow the diagonal. If errors cluster at the high or low end, the model struggles at those conditions — consider adding more CFD runs there.</div>
           <a href="data:image/png;base64,${res.parity_b64}" download="parity_${escHtml(target)}.png" style="font-size:11px;color:var(--accent);text-decoration:none;display:inline-block;margin-top:4px;">⬇ Save</a>
         </div>
         <div class="plot-box">
@@ -1938,6 +1953,7 @@ function renderResults(data) {
             <summary style="cursor:pointer;padding:3px 0;">Reference point (other features held here)</summary>
             <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;">${refInputsHtml}</div>
           </details>
+          <span id="sens-loading-${escHtml(target)}" style="display:none;font-size:12px;color:var(--text-muted);">Computing…</span>
           <div class="plot-box" id="sens-box-${escHtml(target)}" style="display:none">
             <img id="sensitivity-plot-${escHtml(target)}" src="" alt="Sensitivity plot" style="width:100%">
             <a id="sens-dl-${escHtml(target)}" href="#" onclick="(()=>{const a=document.createElement('a');a.href=document.getElementById('sensitivity-plot-${escHtml(target)}').src;a.download='sensitivity_${escHtml(target)}.png';a.click();})()" style="font-size:11px;color:var(--accent);text-decoration:none;display:inline-block;margin-top:4px;cursor:pointer;">⬇ Save</a>
@@ -2023,7 +2039,9 @@ async function loadSensitivity(selectEl) {
 
   const sensBox = document.getElementById(`sens-box-${target}`);
   const imgEl = document.getElementById(`sensitivity-plot-${target}`);
+  const sensLoadingEl = document.getElementById(`sens-loading-${target}`);
   sensBox.style.display = 'none';
+  if (sensLoadingEl) sensLoadingEl.style.display = 'inline';
 
   // Build reference point from Step 3 per-target inputs (or Step 4 form fallback)
   const refParams = buildRefParams(target);
@@ -2032,6 +2050,7 @@ async function loadSensitivity(selectEl) {
     const url = `/api/sensitivity?feature=${encodeURIComponent(feature)}&target=${encodeURIComponent(target)}${refParams}`;
     const res = await fetch(url);
     const data = await res.json();
+    if (sensLoadingEl) sensLoadingEl.style.display = 'none';
     if (!res.ok) { showInlineError('train-error', data.error || 'Sensitivity plot failed.'); return; }
     imgEl.src = 'data:image/png;base64,' + data.plot_b64;
     const rangeEl = document.getElementById(`sens-range-${target}`);
@@ -2041,6 +2060,7 @@ async function loadSensitivity(selectEl) {
     }
     sensBox.style.display = 'block';
   } catch (e) {
+    if (sensLoadingEl) sensLoadingEl.style.display = 'none';
     showInlineError('train-error', 'Failed to load sensitivity plot: ' + e.message);
   }
 }
@@ -2314,6 +2334,8 @@ async function predictSingle() {
   const resultDiv = document.getElementById('single-result');
   resultDiv.innerHTML = tableHtml;
   resultDiv.style.display = 'block';
+  const confLegend = document.getElementById('conf-legend');
+  if (confLegend) confLegend.style.display = 'block';
 
   // "Use as sensitivity reference" button
   const sensRefBtn = document.getElementById('use-as-sens-ref-btn');
